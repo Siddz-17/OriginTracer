@@ -1,5 +1,7 @@
 """First-run checker: python check_setup.py
-Loads .env, then tests each key with one tiny call and lists Groq models on your account."""
+Loads .env, then tests each key with one tiny call.
+Lists Groq models and free OpenRouter models on your account.
+"""
 import asyncio
 import os
 import sys
@@ -39,28 +41,56 @@ async def main():
         except Exception as e:
             ok = False
             print(f"           call FAILED: {type(e).__name__}: {str(e)[:200]}")
+
+    # --- Groq: list available models ---
     if os.getenv("GROQ_API_KEY"):
         import httpx
-        r = httpx.get("https://api.groq.com/openai/v1/models", headers={"Authorization": f"Bearer {os.environ['GROQ_API_KEY']}"})
+        r = httpx.get("https://api.groq.com/openai/v1/models",
+                      headers={"Authorization": f"Bearer {os.environ['GROQ_API_KEY']}"})
         if r.status_code == 200:
-            print("Groq models on your account:", ", ".join(sorted(m["id"] for m in r.json()["data"])))
+            print("\nGroq models on your account:",
+                  ", ".join(sorted(m["id"] for m in r.json()["data"])))
             print("  (if a tier above failed with 404, set its *_MODEL in .env to one of these)")
+
+    # --- OpenRouter: list available free models ---
+    if os.getenv("OPENROUTER_API_KEY"):
+        import httpx
+        r = httpx.get("https://openrouter.ai/api/v1/models",
+                      headers={"Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}"})
+        if r.status_code == 200:
+            free = sorted(
+                m["id"] for m in r.json().get("data", [])
+                if ":free" in m.get("id", "") or m.get("pricing", {}).get("prompt") == "0"
+            )
+            print(f"\nFree OpenRouter models ({len(free)} found):", ", ".join(free[:20]))
+            if len(free) > 20:
+                print(f"  ...and {len(free) - 20} more. See https://openrouter.ai/models?q=free")
+        else:
+            print(f"\nOpenRouter model list failed: HTTP {r.status_code}")
+    else:
+        print("\nOpenRouter key not set. Get a free key at https://openrouter.ai/keys")
+
+    # --- Bluesky ---
     b = bool(os.getenv("BSKY_HANDLE") and os.getenv("BSKY_APP_PASSWORD"))
     if b:
         try:
             import httpx
             r = httpx.post("https://bsky.social/xrpc/com.atproto.server.createSession",
-                           json={"identifier": os.environ["BSKY_HANDLE"], "password": os.environ["BSKY_APP_PASSWORD"]},
+                           json={"identifier": os.environ["BSKY_HANDLE"],
+                                 "password": os.environ["BSKY_APP_PASSWORD"]},
                            timeout=10)
             if r.status_code == 200:
                 print(f"Bluesky credentials: found & authenticated as @{os.environ['BSKY_HANDLE']}")
             else:
-                print(f"Bluesky credentials: found but login FAILED (HTTP {r.status_code}: {r.json().get('message', r.text)})")
+                print(f"Bluesky credentials: found but login FAILED "
+                      f"(HTTP {r.status_code}: {r.json().get('message', r.text)})")
         except Exception as ex:
             print(f"Bluesky credentials: check error: {ex}")
     else:
         print("Bluesky credentials: not set (Bluesky search will be unauthenticated/rate-limited)")
-    print("\nAll good - try:  python -m tracer.cli \"your claim\" --rounds 1 --out report" if ok
+
+    print("\nAll good - try:  py -3 -m tracer.cli \"your claim\" --rounds 1 --no-archive --out report" if ok
           else "\nFix the items above, then run this again.")
+
 
 asyncio.run(main())

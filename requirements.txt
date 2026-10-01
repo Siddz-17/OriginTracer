@@ -11,3 +11,4 @@ trafilatura
 beautifulsoup4
 googlenewsdecoder     # fast Google News URL decoding (~200ms vs 17s Playwright)
 playwright           # optional: USE_PLAYWRIGHT=1, then `playwright install chromium`
+ddgs                 # DuckDuckGo text+news source (renamed from duckduckgo-search); falls back to SearXNG if throttled

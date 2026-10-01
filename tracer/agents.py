@@ -6,12 +6,14 @@ Modules are referenced as `llm.`, `sources.`, `scrape.` so tests can monkeypatch
 """
 import asyncio
 import json
+import os
 import re
 from collections import Counter, defaultdict
 from urllib.parse import urlparse
 
 from . import config, llm, scrape, sources
 from .classify import SOURCE_WEIGHTS, TERMINAL, classify_url
+from .llm import NoJsonReturned
 from .mutation import MUTATION_LABELS, refine_mutations
 from .provenance import origin_analysis
 from .scoring import compute_confidence, source_weight
@@ -50,7 +52,8 @@ async def query_expansion(c, st):
         st.base_query = gd[0]
         bsky_qs = (kw.get("news") or [])[:2] + gd[:2] or para[:2]
         plan = {"bluesky": bsky_qs[:3], "gdelt": gd,
-                "news": (kw.get("news") or [])[:3] or [st.claim]}
+                "news": (kw.get("news") or [])[:3] or [st.claim],
+                "duckduckgo": (kw.get("news") or [])[:2] or [st.claim][:2]}
         if "reddit" in sources.SOURCES:
             plan["reddit"] = para[:3]
         for src, suffixes in sources.CONTRA.items():  # contradiction search
@@ -76,7 +79,7 @@ async def source_discovery(c, st):
     results = await asyncio.gather(*(j[2] for j in jobs), return_exceptions=True)
     for (src, q, _), res in zip(jobs, results):
         if isinstance(res, Exception):
-            st.emit("discovery", f"! {src} '{q[:40]}' failed: {type(res).__name__}: {str(res)[:70]}")
+            st.emit("discovery", f"! {src} '{q[:40]}' failed: {type(res).__name__}: {str(res)[:120]}")
             continue
         for raw in res:
             st.add(raw)
@@ -103,46 +106,63 @@ Use null for unrelated items. Be skeptical; do not invent items."""
 MATCHER_SYS = MATCHER_SYS.replace("__LABELS__", " | ".join(MUTATION_LABELS))
 
 
-def sample_for_matcher(st):
+# Max new items the matcher will classify per round (keeps prompt size manageable).
+_MATCHER_NEW_CAP = int(os.getenv("MATCHER_NEW_CAP", "40"))
+_MATCHER_CHUNK = int(os.getenv("MATCHER_CHUNK", "25"))
+
+
+def sample_for_matcher(st, already_assigned: set):
+    """Return items not yet classified, newest-first, capped at _MATCHER_NEW_CAP."""
     items = st.sorted()
-    news = [e for e in items if e.source in ("news", "gdelt")]
-    other = [e for e in items if e.source not in ("news", "gdelt")]
-    head = news[:80] + other[:20]
-    rest = [e for e in items if e not in head]
-    extra = sorted(rest, key=lambda e: -e.engagement)[:20] + [e for e in rest if DEBUNK_RE.search(e.text)][:20]
+    new_items = [e for e in items if e.id not in already_assigned]
+    # prioritise: news/gdelt first (most likely to contain the claim), then by engagement
+    news = [e for e in new_items if e.source in ("news", "gdelt")]
+    other = [e for e in new_items if e.source not in ("news", "gdelt")]
+    debunks = [e for e in new_items if DEBUNK_RE.search(e.text)]
     seen, out = set(), []
-    for e in head + extra:
+    for e in news[:60] + other[:20] + debunks[:20]:
         if e.id not in seen:
             seen.add(e.id)
             out.append(e)
-    return sorted(out, key=lambda e: e.eff_ts)
+    return sorted(out, key=lambda e: e.eff_ts)[:_MATCHER_NEW_CAP]
+
+
+async def _classify_chunk(chunk, existing_variants, claim):
+    """Run one matcher chunk and return (variants_list, assignments_dict)."""
+    context = f"Claim: {claim}\n\n"
+    if existing_variants:
+        context += f"Existing variants:\n{json.dumps(existing_variants)}\n\n"
+    context += f"Items:\n{json.dumps(chunk)}"
+    try:
+        out = await llm.ask_json(MATCHER_SYS, context, "fast", 4000)
+    except NoJsonReturned as e:
+        return [], {}
+    return out.get("variants", []), out.get("assignments") or {}
 
 
 async def claim_matcher(c, st):
-    items = [e.brief() for e in sample_for_matcher(st)]
-    st.emit("matcher", f"classifying {len(items)} items")
-    st.variants = []
-    st.assign = {}
+    already_assigned = set(st.assign.keys())  # IDs classified in prior rounds
+    new_evs = sample_for_matcher(st, already_assigned)
+    if not new_evs:
+        st.emit("matcher", "no new items to classify this round")
+        return
+    items = [e.brief() for e in new_evs]
+    st.emit("matcher", f"classifying {len(items)} new items (skipping {len(already_assigned)} already assigned)")
     ids = {e.id for e in st.pool.values()}
-    chunk_size = 25
-    for i in range(0, max(len(items), 1), chunk_size):
-        chunk = items[i:i + chunk_size]
-        if not chunk:
-            break
-        context = f"Claim: {st.claim}\n\n"
-        if st.variants:
-            context += f"Existing variants:\n{json.dumps(st.variants)}\n\n"
-        context += f"Items:\n{json.dumps(chunk)}"
-        out = await llm.ask_json(MATCHER_SYS, context, "fast", 4000)
-        for v in out.get("variants", []):
+    # Build chunks and run all in parallel
+    chunks = [items[i:i + _MATCHER_CHUNK] for i in range(0, max(len(items), 1), _MATCHER_CHUNK)]
+    tasks = [_classify_chunk(chunk, list(st.variants), st.claim) for chunk in chunks if chunk]
+    results = await asyncio.gather(*tasks)
+    for new_variants, assignments in results:
+        for v in new_variants:
             if isinstance(v, dict) and v.get("id"):
                 if not any(x.get("id") == v["id"] for x in st.variants):
                     st.variants.append(v)
-        for k, v in (out.get("assignments") or {}).items():
+        for k, v in assignments.items():
             if v and k in ids and isinstance(v, dict):
                 st.assign[k] = v
     refine_mutations(st.variants)
-    st.emit("matcher", f"{len(st.variants)} variants, {len(st.assign)} matched items")
+    st.emit("matcher", f"{len(st.variants)} variants, {len(st.assign)} matched items total")
 
 
 # =================================================================== 4. Origin tracer
@@ -375,7 +395,13 @@ async def fact_checker(c, st, critique=None):
     ctx = f"Claim: {st.claim}"
     if critique:
         ctx += f"\n\nCritique from last round to address:\n{json.dumps(critique)[:3000]}"
-    plan = await llm.ask_json(FC_PLAN_SYS, ctx, "smart")
+    try:
+        plan = await llm.ask_json(FC_PLAN_SYS, ctx, "smart")
+    except NoJsonReturned:
+        st.emit("factcheck", "! fact-checker plan returned no JSON; marking run degraded")
+        st.fact = {"overall": {"verdict": "unverifiable", "summary": "Fact-checker plan failed (no JSON)"},
+                   "subclaims": [], "missing_context": [], "scores": compute_confidence(st)}
+        return
     qs = [q for q in plan.get("wikipedia", [])[:3] if ("wiki", q) not in st.queries_used]
     for q in qs:
         st.queries_used.add(("wiki", q))
@@ -396,9 +422,14 @@ async def fact_checker(c, st, critique=None):
     contra = [e.brief(240) for e, a in matched if a.get("stance") == "debunk"][:20]
     reported = [e.brief(240) for e, a in matched if a.get("stance") != "debunk" and e.source in ("news", "gdelt")][:30]
     st.emit("factcheck", f"judging with {len(docs)} reference docs, {len(contra)} debunk-stance items")
-    st.fact = await llm.ask_json(FC_VERDICT_SYS, json.dumps({
-        "claim": st.claim, "subclaims": plan.get("subclaims", []), "reference_docs": docs,
-        "news_items_reporting_claim": reported, "debunk_or_correction_items": contra}), "smart", 5000)
+    try:
+        st.fact = await llm.ask_json(FC_VERDICT_SYS, json.dumps({
+            "claim": st.claim, "subclaims": plan.get("subclaims", []), "reference_docs": docs,
+            "news_items_reporting_claim": reported, "debunk_or_correction_items": contra}), "smart", 5000)
+    except NoJsonReturned:
+        st.emit("factcheck", "! fact-checker verdict returned no JSON; marking run degraded")
+        st.fact = {"overall": {"verdict": "unverifiable", "summary": "Fact-checker verdict failed (no JSON)"},
+                   "subclaims": [], "missing_context": []}
     st.fact["plan"] = plan.get("subclaims", [])
     st.fact["primary_hint"] = plan.get("primary_hint", "")
     st.fact["missing_context"] = [m for m in st.fact.get("missing_context", []) if isinstance(m, str)]
@@ -434,7 +465,11 @@ async def devils_advocate(c, st):
         "fact_check": {k: v for k, v in st.fact.items() if k not in ("plan", "supporting_evidence", "contradicting_evidence")},
         "reference_docs": [{"id": r["label"], "type": r["type"], "url": r["url"]} for r in st.refs],
     }
-    out = await llm.ask_json(DA_SYS, json.dumps(summary, default=str), "adversary", 4000)
+    try:
+        out = await llm.ask_json(DA_SYS, json.dumps(summary, default=str), "adversary", 4000)
+    except NoJsonReturned:
+        st.emit("devil", "! devil's advocate returned no JSON; skipping this critique")
+        return {"verdict_holds": True, "attacks": [], "alternative_explanations": [], "missing_evidence": []}
     st.critiques.append(out)
     atk = out.get("attacks", [])
     hi, med = sum(a.get("severity") == "high" for a in atk), sum(a.get("severity") == "medium" for a in atk)
@@ -516,6 +551,12 @@ async def judge(c, st):
             "mutation_graph": mutation_graph(st),
             "fact_check": {k: v for k, v in st.fact.items() if k not in ("plan", "supporting_evidence", "contradicting_evidence")},
             "critiques": st.critiques[-2:], "sources": [{"id": r["label"], "type": r["type"], "weight": r["weight"]} for r in st.refs]}
-    st.judge = await llm.ask_json(JUDGE_SYS, json.dumps(case, default=str), "smart", 3000)
+    try:
+        st.judge = await llm.ask_json(JUDGE_SYS, json.dumps(case, default=str), "smart", 3000)
+    except NoJsonReturned:
+        st.emit("judge", "! judge returned no JSON; using fact-checker verdict directly")
+        st.judge = {"verdict": st.fact.get("overall", {}).get("verdict", "unverifiable"),
+                    "rationale": "Judge call failed; fact-checker verdict used as fallback.",
+                    "origin_statement": "", "changed_from_factchecker": False, "caveats": ["Judge LLM call failed"]}
     build_result(st)
     st.emit("judge", f"final verdict {st.result['verdict']} confidence {st.result['confidence']}")

@@ -251,34 +251,69 @@ def test_langgraph_wiring():
 
 
 def test_llm_routing():
-    """Tier -> provider mapping, Groq-size fallback to Gemini, and Groq REST call shape (no network)."""
-    import asyncio, importlib, os
+    """Tier -> provider mapping, Groq-size fallback, and Groq REST call shape (no network).
+
+    Forces smart=gemini and adversary=groq so the test is independent of whatever
+    defaults are configured in .env (gemini | groq | openrouter are all valid).
+
+    NOTE: setup_module() replaces llm.ask_json with fake_llm globally.
+    This test uses _REAL_ASK (captured before the swap) and temporarily
+    reinstates it so the low-level routing logic is exercised without the mock.
+    """
+    import asyncio, os
     from tracer import config, llm
     orig_tiers = dict(config.TIERS)
+    orig_calls = dict(llm._CALLS)
+    # setup_module installed fake_llm; save it so we can restore it in finally
+    current_ask = llm.ask_json
+    # Force a deterministic 3-provider setup for this test
+    config.TIERS["fast"] = ("openrouter", "google/gemini-2.0-flash-exp:free")
     config.TIERS["smart"] = ("gemini", "gemini-3.8-flash")
     config.TIERS["adversary"] = ("groq", "openai/gpt-oss-120b")
+    # Temporarily restore the real ask_json so routing logic is tested, not the mock
+    llm.ask_json = _REAL_ASK
     try:
-        assert set(p for p, _ in config.TIERS.values()) <= {"gemini", "groq"}
-        assert config.TIERS["adversary"][0] != config.TIERS["smart"][0], "adversary should be a different family"
-        os.environ["GEMINI_API_KEY"] = "x"; os.environ["GROQ_API_KEY"] = "y"
+        # All configured providers must be in the known set
+        assert set(p for p, _ in config.TIERS.values()) <= set(config.PROVIDERS), \
+            f"Unknown provider in TIERS: {config.TIERS}"
+        # adversary must be a different provider than smart
+        assert config.TIERS["adversary"][0] != config.TIERS["smart"][0], \
+            "adversary should be a different family than smart"
+
+        # Give all three providers a fake key so _has_key() returns True
+        os.environ["GEMINI_API_KEY"] = "x"
+        os.environ["GROQ_API_KEY"] = "y"
+        os.environ["OPENROUTER_API_KEY"] = "z"
+
+        # adversary=groq: first slot must be groq; groq must NOT be first on oversized prompt
         plan = llm._plan("adversary", 100)
-        assert plan[0][0] == "groq" and plan[1][0] == "gemini", plan
+        assert plan[0][0] == "groq", f"Expected groq first in plan, got: {plan}"
         big = llm._plan("adversary", config.GROQ_MAX_INPUT_CHARS + 1)
-        assert big[0][0] == "gemini", big            # oversized prompt avoids Groq's small TPM budget
+        assert big[0][0] != "groq", f"Groq should be deprioritised for big prompts, got: {big}"
+
+        # Verify Groq is actually called and returns parsed JSON
         seen = {}
         async def fake_groq(system, user, model, max_tokens):
-            seen["model"] = model; return 'noise {"ok": true} noise'
+            seen["model"] = model
+            return 'noise {"ok": true} noise'
         llm._CALLS["groq"] = fake_groq
-        fake_ask, llm.ask_json = llm.ask_json, _REAL_ASK
         out = asyncio.run(llm.ask_json("s", "u", "adversary"))
-        assert out == {"ok": True} and seen["model"] == config.TIERS["adversary"][1]
+        assert out == {"ok": True}, f"Expected {{ok: True}}, got {out}"
+        assert seen["model"] == config.TIERS["adversary"][1]
+
+        # Verify fallback: groq 429 -> next provider succeeds
         async def bad_groq(*a):
             raise llm.RateLimited(0)
-        async def ok_gemini(*a): return '{"via": "gemini"}'
-        llm._CALLS["groq"], llm._CALLS["gemini"] = bad_groq, ok_gemini
-        assert asyncio.run(llm.ask_json("s", "u", "adversary")) == {"via": "gemini"}   # fallback on 429
+        async def ok_gemini(*a):
+            return '{"via": "gemini"}'
+        llm._CALLS["groq"] = bad_groq
+        llm._CALLS["gemini"] = ok_gemini
+        result = asyncio.run(llm.ask_json("s", "u", "adversary"))
+        assert result.get("via") == "gemini", f"Expected gemini fallback, got: {result}"
     finally:
-        llm.ask_json = fake_ask
+        llm.ask_json = current_ask   # restore the fake_llm that setup_module installed
+        llm._CALLS.clear()
+        llm._CALLS.update(orig_calls)
         config.TIERS.clear()
         config.TIERS.update(orig_tiers)
 

@@ -6,8 +6,12 @@ from urllib.parse import urlparse
 UTC = timezone.utc
 
 # ------------------------------------------------------- source types & weights
+# news weight deliberately below PRIMARY_MIN_W (0.75) so news items never count
+# as primary sources and the confidence cap (line 42 scoring.py) always applies when
+# no court/government/peer-reviewed source is cited.  Was 0.75 – that equalled the
+# threshold, causing primary_sources: 8 and suppressing the cap.
 SOURCE_WEIGHTS = {"court": 1.0, "government": 0.95, "dataset": 0.95, "peer_reviewed": 0.9,
-                  "press_release": 0.75, "news": 0.75, "institutional": 0.7, "preprint": 0.6,
+                  "press_release": 0.75, "news": 0.5, "institutional": 0.7, "preprint": 0.6,
                   "reference": 0.5, "web": 0.4, "social": 0.2}
 TERMINAL = {"court", "government", "dataset", "peer_reviewed", "press_release", "institutional"}
 PRIMARY_MIN_W = 0.75  # >= this counts as a primary-type source in confidence stats
