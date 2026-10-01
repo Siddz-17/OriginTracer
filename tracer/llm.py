@@ -175,7 +175,12 @@ async def _groq(system, user, model, max_tokens):
     key = os.getenv("GROQ_API_KEY")
     if not key:
         raise ProviderUnavailable("GROQ_API_KEY is not set")
-    body = _openai_compat_body(system, user, model, max_tokens)
+    # Groq on-demand tier enforces an 8,000 TPM limit (prompt + completion tokens).
+    est_prompt_tokens = int((len(system) + len(user)) / 3.2)
+    if est_prompt_tokens >= 7200:
+        raise ModelUnavailable(f"groq: prompt length ({est_prompt_tokens} est. tokens) exceeds 8000 TPM limit")
+    safe_max_tokens = min(max_tokens, max(800, 7600 - est_prompt_tokens))
+    body = _openai_compat_body(system, user, model, safe_max_tokens)
     body["max_completion_tokens"] = body.pop("max_tokens")  # Groq uses max_completion_tokens
     if model.startswith("openai/gpt-oss"):
         body["reasoning_effort"] = "low"
@@ -226,6 +231,9 @@ def _has_key(provider):
 def _models_for(provider, first=None):
     if provider == "openrouter":
         return list(dict.fromkeys([m for m in [first] + config.OPENROUTER_MODELS if m]))
+    if provider == "gemini":
+        gem_models = getattr(config, "GEMINI_MODELS", ["gemini-3.5-flash", "gemini-3.5-flash-lite"])
+        return list(dict.fromkeys([m for m in [first] + gem_models if m]))
     return [first or config._DEFAULT_MODEL[provider]]
 
 

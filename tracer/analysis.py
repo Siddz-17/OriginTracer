@@ -122,7 +122,7 @@ async def consolidated_analysis(c, st, max_items=30, max_chars=28000):
     st.emit("analysis", f"single LLM call over {len(items)} ranked evidence items {by_kind}")
     valid = {x["id"] for x in items}
     try:
-        raw = await llm.ask_json(ANALYSIS_SYS, _pack(st, items), "smart", 6000)
+        raw = await llm.ask_json(ANALYSIS_SYS, _pack(st, items), "smart", 2000)
         res = _clean(raw, valid)
         if not res["subclaims"] and res["verdict"] == "unverifiable" and not res["rationale"]:
             raise NoJsonReturned("model returned JSON without an analysis")

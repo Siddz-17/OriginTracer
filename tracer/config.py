@@ -46,7 +46,9 @@ OPENROUTER_MODELS = [m.strip() for m in os.getenv(
     "OPENROUTER_MODELS",
     "nvidia/nemotron-3-super-120b-a12b:free,google/gemma-4-31b-it:free,qwen/qwen3.8-27b:free,"
     "nvidia/nemotron-3-ultra-550b-a55b:free,google/gemma-4-26b-a4b-it:free").split(",") if m.strip()]
-_DEFAULT_MODEL = {"gemini": "gemini-2.5-flash", "groq": "openai/gpt-oss-120b",
+GEMINI_MODELS = [m.strip() for m in os.getenv(
+    "GEMINI_MODELS", "gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.8-flash").split(",") if m.strip()]
+_DEFAULT_MODEL = {"gemini": GEMINI_MODELS[0], "groq": "openai/gpt-oss-120b",
                   "openrouter": OPENROUTER_MODELS[0] if OPENROUTER_MODELS else "openrouter/auto"}
 _DEFAULTS = {"fast": "openrouter", "smart": "openrouter", "adversary": "openrouter"}
 PROVIDERS = ("openrouter", "groq", "gemini")
