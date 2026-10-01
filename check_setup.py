@@ -17,7 +17,7 @@ def load_env(path=".env"):
         else:
             print("No .env file found. Run:  copy .env.example .env   then paste your keys into it.")
             sys.exit(1)
-    for line in open(path):
+    for line in open(path, encoding="utf-8-sig"):
         line = line.split("#", 1)[0].strip()
         if "=" in line:
             k, v = line.split("=", 1)
@@ -29,18 +29,20 @@ async def main():
     load_env()
     from tracer import config, llm
     ok = True
+    print(f"mode: {config.MODE}  (single = one LLM call per run)")
     for tier, (prov, model) in config.TIERS.items():
-        have = llm._has_key(prov)
-        print(f"[{tier:9}] {prov}/{model}: key {'found' if have else 'MISSING'}")
-        if not have:
-            ok = False
-            continue
+        print(f"[{tier:9}] {prov}/{model}: key {'found' if llm._has_key(prov) else 'MISSING'}")
+    # One test call only (free OpenRouter accounts get ~50 requests/day): the tier the analysis uses.
+    prov, model = config.TIERS["smart"]
+    if llm._has_key(prov):
         try:
-            out = await llm._try(prov, model, 'Reply with JSON {"ok": true}', "ping", 200)
-            print(f"           call {'OK' if out else 'returned no JSON'}")
+            out = await llm.ask_json('Reply with JSON {"ok": true}', "ping", "smart", 200)
+            print(f"test call via the smart tier: {'OK' if out else 'returned no JSON'}")
         except Exception as e:
             ok = False
-            print(f"           call FAILED: {type(e).__name__}: {str(e)[:200]}")
+            print(f"test call FAILED: {type(e).__name__}: {str(e)[:300]}")
+    else:
+        ok = False
 
     # --- Groq: list available models ---
     if os.getenv("GROQ_API_KEY"):
@@ -58,13 +60,14 @@ async def main():
         r = httpx.get("https://openrouter.ai/api/v1/models",
                       headers={"Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}"})
         if r.status_code == 200:
-            free = sorted(
-                m["id"] for m in r.json().get("data", [])
-                if ":free" in m.get("id", "") or m.get("pricing", {}).get("prompt") == "0"
-            )
-            print(f"\nFree OpenRouter models ({len(free)} found):", ", ".join(free[:20]))
-            if len(free) > 20:
-                print(f"  ...and {len(free) - 20} more. See https://openrouter.ai/models?q=free")
+            data = r.json().get("data", [])
+            free = sorted(m["id"] for m in data if m.get("id", "").endswith(":free"))
+            print(f"\nFree OpenRouter models ({len(free)} found):", ", ".join(free))
+            listed = {m["id"] for m in data}
+            for m in config.OPENROUTER_MODELS:
+                if m not in listed:
+                    ok = False
+                    print(f"  ! configured model {m} is NOT listed any more; remove it from OPENROUTER_MODELS")
         else:
             print(f"\nOpenRouter model list failed: HTTP {r.status_code}")
     else:
@@ -89,7 +92,7 @@ async def main():
     else:
         print("Bluesky credentials: not set (Bluesky search will be unauthenticated/rate-limited)")
 
-    print("\nAll good - try:  py -3 -m tracer.cli \"your claim\" --rounds 1 --no-archive --out report" if ok
+    print("\nAll good - try:  python -m tracer.cli \"your claim\" --out report" if ok
           else "\nFix the items above, then run this again.")
 
 

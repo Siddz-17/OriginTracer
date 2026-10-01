@@ -87,7 +87,7 @@ async def render_js(url):
     async with _pw_sem, async_playwright() as p:
         b = await p.chromium.launch(args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"])
         try:
-            pg = await b.new_page(user_agent=config.UA)
+            pg = await b.new_page(user_agent=config.BROWSER_UA)
             await pg.goto(url, wait_until="domcontentloaded", timeout=8000)
             await pg.wait_for_timeout(300)
             return pg.url, await pg.content()
@@ -124,7 +124,7 @@ async def resolve_redirect(url, c=None):
         async with _pw_sem, async_playwright() as p:
             b = await p.chromium.launch(args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"])
             try:
-                pg = await b.new_page(user_agent=config.UA)
+                pg = await b.new_page(user_agent=config.BROWSER_UA)
                 await pg.goto(url, wait_until="domcontentloaded", timeout=8000)
                 await pg.wait_for_url(lambda u: "news.google.com" not in u, timeout=4000)
                 final_url = pg.url
@@ -144,7 +144,7 @@ async def fetch_page(c, url) -> Page:
         return _page_cache[url]
     via = "live"
     try:
-        r = await c.get(url, headers={"User-Agent": config.UA})
+        r = await c.get(url, headers={"User-Agent": config.BROWSER_UA, "Accept-Language": "en-US,en;q=0.9"})
         r.raise_for_status()
     except Exception:
         try:

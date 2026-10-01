@@ -105,6 +105,12 @@ def render_report(st):
         hops = " → ".join(f"{classify_url(u)}" for u in ch["path"])
         mark = "✅ reached" if ch["resolved"] else f"✖ stopped ({ch.get('note', ch['end'])})"
         L.append(f"- {mark}: {hops}\n  - " + "\n  - ".join(ch["path"]))
+    if st.evidence_pack:
+        L += ["\n## Evidence sent to the analysis (ranked locally)\n",
+              "| ID | Type | Outlet | Reputable | Date | Stance | Title |", "|---|---|---|---|---|---|---|"]
+        for x in st.evidence_pack:
+            L.append(f"| {x['id']} | {x['kind']} | {x['outlet']} | {x.get('tier') or ''} | {x.get('date') or '?'} | "
+                     f"{x.get('stance') or ''} | [{x['title'][:90].replace('|', '/')}]({x['url']}) |")
     L += ["\n## Source ranking\n", "| Ref | Type | Weight | Link |", "|---|---|---|---|"]
     for r in sorted(st.refs, key=lambda r: -r["weight"]):
         L.append(f"| {r.get('label')} | {r['type']} | {r['weight']} | {r['url']} |")
@@ -123,7 +129,7 @@ def render_report(st):
     for (s, a), (n, en) in sorted(agg.items(), key=lambda x: -(x[1][0] + x[1][1] / 50))[:10]:
         L.append(f"| {s} | {a} | {n} | {en} |")
 
-    L += ["\n## Devil's advocate\n"]
+    L += ["\n## Devil's advocate / self-critique\n"]
     for i, cr in enumerate(st.critiques, 1):
         L.append(f"**Round {i}** — holds: {cr.get('verdict_holds')}")
         for a in cr.get("attacks", []):

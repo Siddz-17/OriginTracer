@@ -77,7 +77,15 @@ def origin_analysis(st, now=None):
     t0, t1 = min(e.eff_ts for e in M.values()), max(e.eff_ts for e in M.values())
     span = (t1 - t0).total_seconds()
     vroot = {v["id"] for v in st.variants if not v.get("parent")}
-    pool = {i: e for i, e in M.items() if st.assign[i].get("stance") != "debunk"} or M
+    # undated web results carry the fetch time, not a publication time: never let them be the origin
+    pool = {i: e for i, e in M.items() if st.assign[i].get("stance") not in ("debunk", "joke")
+            and not e.meta.get("undated")}
+    # Prefer strongly matching items as origin candidates: a loosely matching old article that merely shares
+    # keywords would otherwise win on the timestamp term alone.
+    strong = {i: e for i, e in pool.items() if st.assign[i].get("relevance", 1.0) >= 0.75}
+    pool = strong or pool
+    only_debunks = not pool  # every observed item is a debunk/fact-check: the claim's own source was not seen
+    pool = pool or {i: e for i, e in M.items() if not e.meta.get("undated")} or M
     cand = []
     for i, e in pool.items():
         parts = {
@@ -95,6 +103,8 @@ def origin_analysis(st, now=None):
     top = M[cand[0][1]]
     if top.source == "gdelt" and top.eff_ts < now - timedelta(days=83):  # near GDELT's 90-day horizon
         p_unobs += 0.2
+    if only_debunks:
+        p_unobs = max(p_unobs, 0.5)
     p_unobs = min(0.8, p_unobs)
     out = []
     for (s, i, parts), zi in list(zip(cand, z))[:5]:
@@ -108,6 +118,9 @@ def origin_analysis(st, now=None):
     ti = M[t["id"]]
     bullets = [f"First observed on {t['source']} at {t['ts']:%Y-%m-%d %H:%M UTC}"
                + (f" (Wayback capture pushed this back from {t['orig_ts']:%Y-%m-%d})" if t["ts"] < t["orig_ts"] else "")]
+    if only_debunks:
+        bullets.append("Only debunks / fact-checks were found, so this is the earliest observed COVERAGE of the "
+                       "claim; the claim itself circulated earlier from an unobserved source")
     if t["n_descendants"]:
         bullets.append(f"Referenced (quote/link/citation/mention) by {t['n_descendants']} later items across "
                        f"{len(t['platforms'])} platform(s): {', '.join(t['platforms'])}")

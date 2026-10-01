@@ -40,6 +40,7 @@ class RunRequest(BaseModel):
     depth: int = Field(3, ge=1, le=4)
     primary: list[str] = []
     archive: bool = True
+    mode: str | None = Field(None, pattern="^(single|agents)$")  # default: TRACER_MODE (single)
 
 
 async def _execute(rid: str, req: RunRequest):
@@ -47,7 +48,8 @@ async def _execute(rid: str, req: RunRequest):
         store.set_status(rid, "running")
         try:
             st = await run_pipeline(req.claim, rounds=req.rounds, depth=req.depth, primary=req.primary,
-                                    archive=req.archive, on_event=lambda a, m: store.add_event(rid, a, m))
+                                    archive=req.archive, mode=req.mode,
+                                    on_event=lambda a, m: store.add_event(rid, a, m))
             store.save_result(rid, st, render_report(st))
         except Exception as ex:  # surfaced to the client via GET /runs/{id}
             store.set_status(rid, "failed", f"{type(ex).__name__}: {ex}")
@@ -91,7 +93,8 @@ def get_report(rid: str):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "tiers": {t: {"provider": p, "model": m} for t, (p, m) in config.TIERS.items()}}
+    return {"ok": True, "mode": config.MODE, "openrouter_models": config.OPENROUTER_MODELS,
+            "tiers": {t: {"provider": p, "model": m} for t, (p, m) in config.TIERS.items()}}
 
 
 @app.get("/style.css")

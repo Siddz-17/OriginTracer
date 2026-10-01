@@ -12,7 +12,7 @@ UTC = timezone.utc
 # threshold, causing primary_sources: 8 and suppressing the cap.
 SOURCE_WEIGHTS = {"court": 1.0, "government": 0.95, "dataset": 0.95, "peer_reviewed": 0.9,
                   "press_release": 0.75, "news": 0.5, "institutional": 0.7, "preprint": 0.6,
-                  "reference": 0.5, "web": 0.4, "social": 0.2}
+                  "fact_check": 0.7, "reference": 0.5, "web": 0.4, "social": 0.2}
 TERMINAL = {"court", "government", "dataset", "peer_reviewed", "press_release", "institutional"}
 PRIMARY_MIN_W = 0.75  # >= this counts as a primary-type source in confidence stats
 
@@ -45,6 +45,8 @@ def classify_url(u):
     h, path = (p.netloc or "").lower().removeprefix("www."), (p.path or "").lower()
     if host_in(h, SOCIAL):
         return "social"
+    if h.startswith("newsroom.") or (not host_in(h, NEWS) and "/newsroom" in path):
+        return "press_release"  # e.g. newsroom.apple.com, which the "news" substring rule misfiled
     if host_in(h, NEWS) or "news" in h:
         return "news"
     if host_in(h, COURT) or "/docket" in path:

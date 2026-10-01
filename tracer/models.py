@@ -57,6 +57,7 @@ class State:
         self.fact: dict = {}
         self.critiques: list[dict] = []
         self.judge: dict = {}
+        self.evidence_pack: list[dict] = []  # ranked evidence sent to the consolidated analysis
         self.result: dict = {}
         self.events: list[dict] = []
         self.on_event = on_event

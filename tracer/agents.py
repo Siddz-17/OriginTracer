@@ -11,7 +11,7 @@ import re
 from collections import Counter, defaultdict
 from urllib.parse import urlparse
 
-from . import config, llm, scrape, sources
+from . import config, llm, local, scrape, sources
 from .classify import SOURCE_WEIGHTS, TERMINAL, classify_url
 from .llm import NoJsonReturned
 from .mutation import MUTATION_LABELS, refine_mutations
@@ -52,6 +52,7 @@ async def query_expansion(c, st):
         st.base_query = gd[0]
         bsky_qs = (kw.get("news") or [])[:2] + gd[:2] or para[:2]
         plan = {"bluesky": bsky_qs[:3], "gdelt": gd,
+                "outlets": (kw.get("news") or [st.claim])[:2], "factcheck": gd[:1],
                 "news": (kw.get("news") or [])[:3] or [st.claim],
                 "duckduckgo": (kw.get("news") or [])[:2] or [st.claim][:2]}
         if "reddit" in sources.SOURCES:
@@ -85,7 +86,8 @@ async def source_discovery(c, st):
             st.add(raw)
     cnt = Counter(e.source for e in st.pool.values())
     st.discovery = {"reddit_posts": cnt["reddit"], "bluesky_posts": cnt["bluesky"],
-                    "news_articles": cnt["news"] + cnt["gdelt"]}
+                    "news_articles": cnt["news"] + cnt["gdelt"], "web_results": cnt["duckduckgo"],
+                    "reputable_outlet_items": sum(1 for e in st.pool.values() if local.outlet_score(e) > 0)}
     if cnt["reddit"] == 0 and cnt["bluesky"] == 0 and (cnt["news"] + cnt["gdelt"]) > 0:
         st.emit("discovery", "social sources unavailable/empty; prioritizing global news coverage as main priority")
     st.emit("discovery", json.dumps(st.discovery))
@@ -185,7 +187,7 @@ async def archive_pass(c, st, limit=25):
     st.emit("origin", f"Wayback: checked {len(targets)} URLs, {moved} pushed earlier")
 
 
-async def origin_tracer(c, st, archive=True):
+async def origin_tracer(c, st, archive=True, quiet=False):
     if archive:
         await archive_pass(c, st)
     st.origin = origin_analysis(st)
@@ -200,6 +202,8 @@ async def origin_tracer(c, st, archive=True):
         agg[(e.source, e.author)][1] += e.engagement
     st.amplifiers = [{"source": s, "author": a, "items": n, "engagement": en} for (s, a), (n, en) in
                      sorted(agg.items(), key=lambda x: -(x[1][0] + x[1][1] / 50))[:10]]
+    if quiet:
+        return
     if st.origin:
         top = st.origin["candidates"][0]
         st.emit("origin", f"likely origin {top['source']}/{top['author']} p={top['prob']} "
@@ -261,12 +265,17 @@ async def _trace_citations(c, st, max_depth=3, budget=25):
     ev = st.by_id()
     matched = sorted((ev[i] for i in st.assign if i in ev), key=lambda e: e.eff_ts)
     seeds, n_news = [], 0
-    news_candidates = [e for e in matched if e.source in ("news", "gdelt")][:16]
+    # Fetch full articles from fact-checkers / wire services / major outlets first, then the most relevant rest.
+    news_candidates = sorted((e for e in matched if e.source in ("news", "gdelt", "duckduckgo")),
+                             key=lambda e: -(local.outlet_score(e) + st.assign[e.id].get("relevance", 0)
+                                             + (0.3 if st.assign[e.id].get("stance") == "debunk" else 0)))[:16]
+    sem = asyncio.Semaphore(4)  # Google News decoding hits Google; keep it gentle
 
     async def _resolve_news(e):
         u = e.url
         if "news.google.com" in u:
-            ru = e.meta.get("resolved_url") or await scrape.resolve_redirect(u, c)
+            async with sem:
+                ru = e.meta.get("resolved_url") or await scrape.resolve_redirect(u, c)
             if ru:
                 e.meta["resolved_url"] = ru
                 return ru
@@ -274,9 +283,11 @@ async def _trace_citations(c, st, max_depth=3, budget=25):
         return u
 
     resolved_news = await asyncio.gather(*(_resolve_news(e) for e in news_candidates), return_exceptions=True)
-    for ru in resolved_news:
+    article_of = {}
+    for e, ru in zip(news_candidates, resolved_news):
         if ru and not isinstance(ru, Exception):
             seeds.append((ru, [ru]))
+            article_of[ru] = e
             n_news += 1
 
     for e in matched:
@@ -299,6 +310,8 @@ async def _trace_citations(c, st, max_depth=3, budget=25):
         for (u, path), pg in zip(batch, pages):
             st.fetched.add(u)
             kind = _official_type(st, u)
+            if u in article_of and not isinstance(pg, Exception) and len(pg.text) > 200:
+                article_of[u].meta["fulltext"] = pg.text  # body text feeds evidence ranking passages
             if isinstance(pg, Exception):
                 st.chains.append({"path": path, "resolved": kind in TERMINAL, "end": kind, "note": "unreachable"})
                 continue
@@ -379,6 +392,23 @@ Return {"subclaims":[{"id":"S1","verdict":"supported|refuted|misleading|unverifi
 "overall":{"verdict":"true|mostly_true|misleading|mostly_false|false|unverifiable","summary":"..."}}"""
 
 
+async def fact_checker_background(c, st):
+    """Single-call mode: Wikipedia background for the claim's names / key terms, no LLM planning."""
+    qs = list(dict.fromkeys([st.base_query] + [o for o in st.orgs[:2] if o.lower() != st.base_query]))[:3]
+    qs = [q for q in qs if q and ("wiki", q) not in st.queries_used]
+    for q in qs:
+        st.queries_used.add(("wiki", q))
+    res = await asyncio.gather(*(sources.wikipedia(c, q) for q in qs), return_exceptions=True)
+    n = 0
+    for r in res:
+        if isinstance(r, Exception):
+            continue
+        for p in r[:2]:
+            st.add_ref("W", p["url"], p["title"], p["text"], "reference")
+            n += 1
+    st.emit("evidence", f"Wikipedia background: {n} article(s) for {qs}")
+
+
 def evidence_cards(st, ids):
     ev, out = st.by_id(), []
     for i in dict.fromkeys(ids):
@@ -430,7 +460,11 @@ async def fact_checker(c, st, critique=None):
         st.emit("factcheck", "! fact-checker verdict returned no JSON; marking run degraded")
         st.fact = {"overall": {"verdict": "unverifiable", "summary": "Fact-checker verdict failed (no JSON)"},
                    "subclaims": [], "missing_context": []}
-    st.fact["plan"] = plan.get("subclaims", [])
+    st.fact["plan"] = [s for s in plan.get("subclaims", []) if isinstance(s, dict) and s.get("id")]
+    texts = {s["id"]: s.get("text", "") for s in st.fact["plan"]}
+    for s in st.fact.get("subclaims", []):  # verdict JSON has no text; the UI and report need it
+        if isinstance(s, dict) and not s.get("text"):
+            s["text"] = texts.get(s.get("id"), "")
     st.fact["primary_hint"] = plan.get("primary_hint", "")
     st.fact["missing_context"] = [m for m in st.fact.get("missing_context", []) if isinstance(m, str)]
     st.fact["scores"] = compute_confidence(st)
@@ -468,8 +502,15 @@ async def devils_advocate(c, st):
     try:
         out = await llm.ask_json(DA_SYS, json.dumps(summary, default=str), "adversary", 4000)
     except NoJsonReturned:
+        # Record a holding critique: without it route() saw no critique and looped another full round.
         st.emit("devil", "! devil's advocate returned no JSON; skipping this critique")
-        return {"verdict_holds": True, "attacks": [], "alternative_explanations": [], "missing_evidence": []}
+        out = {"verdict_holds": True, "attacks": [], "alternative_explanations": [], "missing_evidence": [],
+               "note": "critique unavailable (LLM failure)"}
+        st.critiques.append(out)
+        st.follow_up = None
+        sc = st.fact.setdefault("scores", {})
+        sc["after_critique"] = sc.get("confidence", 0)
+        return out
     st.critiques.append(out)
     atk = out.get("attacks", [])
     hi, med = sum(a.get("severity") == "high" for a in atk), sum(a.get("severity") == "medium" for a in atk)
@@ -540,6 +581,9 @@ def build_result(st):
         "citation_chains": st.chains,
         "critique": st.critiques[-1] if st.critiques else None,
         "discovery": st.discovery,
+        "evidence_ranked": [{k: x.get(k) for k in ("id", "kind", "weight", "outlet", "tier", "date", "title", "url",
+                                                     "stance")} for x in st.evidence_pack],
+        "primary_hint": st.fact.get("primary_hint", ""),
     })
     return st.result
 

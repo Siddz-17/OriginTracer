@@ -22,7 +22,7 @@ from tracer.report import render_report  # noqa: E402
 UTC = timezone.utc
 T0 = datetime.now(UTC) - timedelta(days=10)
 CLAIM = "Apple is shutting down iCloud"
-calls = {"da": 0, "expansion": 0}
+calls = {"da": 0, "expansion": 0, "analysis": 0}
 
 
 # ------------------------------------------------------------------ fake sources
@@ -50,6 +50,20 @@ async def f_gdelt(c, q):
 async def f_news(c, q):
     return [raw("news", "https://factcheck.example.org/icloud", "factcheck.example.org", 50,
                 "Fact check: Apple is not shutting down iCloud, claim is false")]
+
+
+async def f_outlets(c, q):
+    return [raw("news", "https://news.google.com/rss/articles/reuters1", "Reuters", 40,
+                "Apple says it is not shutting down iCloud", outlet_domain="reuters.com")]
+
+
+async def f_factcheck(c, q):
+    return [raw("news", "https://www.snopes.com/fact-check/apple-icloud-shutdown/", "Snopes", 60,
+                "Fact Check: Is Apple shutting down iCloud? No, the rumor is false", outlet_domain="snopes.com")]
+
+
+async def f_empty(c, q):
+    return []
 
 
 async def f_wiki(c, q):
@@ -102,6 +116,10 @@ class FakeClient:
         raise RuntimeError("404")
 
 
+async def fake_resolve(url, c=None):
+    return None  # Google News links stay unresolved offline
+
+
 # --------------------------------------------------------------------- fake LLM
 async def fake_llm(system, user, tier="fast", max_tokens=4000):
     if "Query Expansion" in system:
@@ -113,7 +131,7 @@ async def fake_llm(system, user, tier="fast", max_tokens=4000):
         items = json.loads(user.split("Items:\n")[1])
         a = {}
         for it in items:
-            if "Fact check" in it["text"]:
+            if "Fact check" in it["text"] or "Fact Check" in it["text"]:
                 a[it["id"]] = {"variant": "V0", "stance": "debunk"}
             elif "5 million" in it["text"]:
                 a[it["id"]] = {"variant": "V1", "stance": "assert"}
@@ -127,7 +145,7 @@ async def fake_llm(system, user, tier="fast", max_tokens=4000):
         return {"subclaims": [{"id": "S1", "text": "Apple announced an iCloud shutdown", "depends_on": []},
                               {"id": "S2", "text": "1M accounts affected", "depends_on": ["S1"]}],
                 "wikipedia": ["iCloud"], "primary_hint": "Apple newsroom / 8-K"}
-    if "Judge each sub-claim" in system:
+    if "Judge each sub-claim ONLY" in system:
         docs = json.loads(user)["reference_docs"]
         prim = [d["id"] for d in docs if d["weight"] >= 0.75]
         return {"subclaims": [{"id": "S1", "verdict": "refuted", "reasoning": "Apple says it is not going away.",
@@ -135,6 +153,20 @@ async def fake_llm(system, user, tier="fast", max_tokens=4000):
                               {"id": "S2", "verdict": "unverifiable", "reasoning": "no data", "supporting": [], "dissenting": []}],
                 "missing_context": ["Storage plan changes were announced"],
                 "overall": {"verdict": "false", "summary": "Apple denies it."}}
+    if "meticulous fact-checker" in system:  # the single consolidated analysis call
+        calls["analysis"] += 1
+        pack = json.loads(user)
+        assert pack["evidence"][0]["type"] in ("fact_check", "press_release", "government"), pack["evidence"][0]
+        strong = [e["id"] for e in pack["evidence"] if e["weight"] >= 0.7]
+        return {"subclaims": [{"id": "S1", "text": "Apple announced an iCloud shutdown", "verdict": "refuted",
+                               "reasoning": "Apple and fact-checkers say no.", "supporting": strong[:3] + ["BOGUS"],
+                               "dissenting": []}],
+                "verdict": "false", "rationale": "Fact-checkers and Apple's own statement refute it.",
+                "missing_context": ["Storage plans changed"], "origin_statement": "Reddit post, unconfirmed.",
+                "self_critique": {"attacks": [{"target": "origin", "argument": "coverage gaps", "severity": "medium"}],
+                                  "verdict_holds": True},
+                "debunk_ids": [], "irrelevant_ids": [],
+                "caveats": ["Search coverage is partial"], "primary_hint": "Apple newsroom"}
     if "You are the Judge" in system:
         return {"verdict": "false", "rationale": "Primary sources contradict it.", "origin_statement": "Reddit, unconfirmed.",
                 "changed_from_factchecker": False, "caveats": ["Search coverage is partial"]}
@@ -149,8 +181,11 @@ async def fake_llm(system, user, tier="fast", max_tokens=4000):
 
 def setup():
     llm.ask_json = fake_llm
-    sources.SOURCES.update(reddit=f_reddit, bluesky=f_bluesky, gdelt=f_gdelt, news=f_news)
+    sources.SOURCES.clear()
+    sources.SOURCES.update(reddit=f_reddit, bluesky=f_bluesky, gdelt=f_gdelt, news=f_news,
+                           outlets=f_outlets, factcheck=f_factcheck, duckduckgo=f_empty)
     sources.gdelt, sources.wikipedia, sources.wayback_first = f_gdelt, f_wiki, f_wayback
+    scrape.resolve_redirect = fake_resolve
     httpx.AsyncClient = FakeClient
 
 
@@ -176,9 +211,35 @@ def test_scrape_links():
     assert scrape.extract_links(page, "https://n.example.com/a") == ["https://www.justice.gov/p/1"]
 
 
+def test_local_matching():
+    from tracer import local
+    from tracer.outlets import outlet_tier
+    p = local.claim_profile("NASA confirmed Earth will experience 15 days of darkness in November")
+    assert local.relevance(p, "No, NASA did not say Earth will go dark for 15 days of darkness") >= 0.5
+    assert local.relevance(p, "November 10, 1967: NASA's First Color Picture of the Earth") < 0.5
+    assert local.stance("No, Earth will not experience 15 days of darkness") == "debunk"
+    assert local.stance("NASA confirms 15 days of darkness") == "report"
+    p2 = local.claim_profile(CLAIM)
+    assert local.relevance(p2, "Apple to discontinue iCloud, sources say") > 0.8  # synonym match
+    assert local.relevance(p2, "Google shuts down Stadia") < 0.3
+    assert outlet_tier("https://www.reuters.com/fact-check/x") == "fact_check"
+    assert outlet_tier("apnews.com") == "wire" and outlet_tier("https://www.bbc.co.uk/news/x") == "major"
+    assert outlet_tier("randomblog.example") is None
+    plan, _, _, base = local.expand_queries("NASA confirmed Earth will experience 15 days of darkness in November")
+    assert "darkness" in base and "confirmed" not in base, base
+
+
+def test_json_extraction():
+    txt = '<think>maybe {"a": 1}</think>```json\n{"verdict": "false", "x": {"y": 2}}\n```'
+    assert llm._parse(txt) == {"verdict": "false", "x": {"y": 2}}
+    assert llm._parse('Sure! {"a": 1} and then {"verdict": "true", "subclaims": []}') == {"verdict": "true", "subclaims": []}
+    assert llm._parse("no json here") == {}
+
+
 def test_pipeline(use_langgraph=False):
-    calls.update(da=0, expansion=0)
-    st = asyncio.run(pipeline.run_pipeline(CLAIM, rounds=3, use_langgraph=use_langgraph))
+    """Legacy multi-agent mode."""
+    calls.update(da=0, expansion=0, analysis=0)
+    st = asyncio.run(pipeline.run_pipeline(CLAIM, rounds=3, use_langgraph=use_langgraph, mode="agents"))
     r = st.result
     assert calls["da"] == 2 and calls["expansion"] == 1, calls  # round 2 used follow-up queries, then verdict held
     assert r["verdict"] == "false"
@@ -188,8 +249,9 @@ def test_pipeline(use_langgraph=False):
     labels = {n["id"]: n["label"] for n in r["mutation_graph"]["nodes"]}
     assert labels == {"V0": "original", "V1": "exaggeration"}, labels
     assert r["mutation_graph"]["edges"][0]["diff"]["numbers"]["ratio"] == 5
-    types = {d["type"] for d in r["fact_check"]["supporting_evidence"]}
-    assert types & {"press_release", "government"}, types  # primary-type evidence was found and cited
+    types_ = {d["type"] for d in r["fact_check"]["supporting_evidence"]}
+    assert types_ & {"press_release", "government"}, types_  # primary-type evidence was found and cited
+    assert all(s.get("text") for s in r["fact_check"]["subclaims"])  # sub-claim text merged from the plan
     assert r["scores"]["primary_sources"] >= 1 and r["confidence"] > 0.3
     assert any(ch["resolved"] for ch in r["citation_chains"])
     assert st.refs and all(x["weight"] >= 0.4 for x in st.refs)
@@ -204,8 +266,30 @@ def test_pipeline(use_langgraph=False):
     return st
 
 
+def test_single_call_pipeline():
+    """Default mode: retrieval / matching / ranking are local and exactly ONE LLM call is made."""
+    calls.update(da=0, expansion=0, analysis=0)
+    st = asyncio.run(pipeline.run_pipeline(CLAIM, rounds=2, mode="single"))
+    r = st.result
+    assert calls == {"da": 0, "expansion": 0, "analysis": 1}, calls
+    assert r["verdict"] == "false"
+    sub = r["fact_check"]["subclaims"][0]
+    assert sub["text"] and "BOGUS" not in sub["supporting"], sub  # invented ids are dropped
+    assert r["scores"]["after_critique"] < r["scores"]["confidence"]  # medium self-attack lowers confidence
+    ranked = r["evidence_ranked"]
+    assert ranked and any(x["tier"] == "fact_check" for x in ranked), ranked
+    assert any(x["outlet"] == "reuters.com" for x in ranked), ranked  # reputable outlet item kept
+    assert r["origin"]["likely"]["source"] == "reddit", r["origin"]["likely"]
+    ev = st.by_id()
+    assert all(a["stance"] == "debunk" for i, a in st.assign.items() if "snopes" in ev[i].url)
+    labels = {n["id"]: n["label"] for n in r["mutation_graph"]["nodes"]}
+    assert labels.get("V0") == "original" and "exaggeration" in labels.values(), labels  # 1M -> 5M
+    assert "Likely origin" in render_report(st)
+    json.dumps(r)
+
+
 def test_langgraph_wiring():
-    """Verify node/edge topology against a minimal stand-in for langgraph (real LangGraph is not installed here)."""
+    """Verify node/edge topology against a minimal stand-in for langgraph."""
     mod = types.ModuleType("langgraph.graph")
     mod.END = "__end__"
 
@@ -243,56 +327,41 @@ def test_langgraph_wiring():
 
     mod.StateGraph = SG
     pkg = types.ModuleType("langgraph")
+    saved = {k: sys.modules.get(k) for k in ("langgraph", "langgraph.graph")}
     sys.modules.update({"langgraph": pkg, "langgraph.graph": mod})
     try:
         test_pipeline(use_langgraph=True)
     finally:
-        del sys.modules["langgraph"], sys.modules["langgraph.graph"]
+        for k, v in saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
 
 
 def test_llm_routing():
-    """Tier -> provider mapping, Groq-size fallback, and Groq REST call shape (no network).
-
-    Forces smart=gemini and adversary=groq so the test is independent of whatever
-    defaults are configured in .env (gemini | groq | openrouter are all valid).
-
-    NOTE: setup_module() replaces llm.ask_json with fake_llm globally.
-    This test uses _REAL_ASK (captured before the swap) and temporarily
-    reinstates it so the low-level routing logic is exercised without the mock.
-    """
-    import asyncio, os
-    from tracer import config, llm
+    """Tier -> provider mapping, model walking, rate-limit / quota handling (no network)."""
+    from tracer import config
     orig_tiers = dict(config.TIERS)
     orig_calls = dict(llm._CALLS)
-    # setup_module installed fake_llm; save it so we can restore it in finally
+    orig_interval = dict(llm._MIN_INTERVAL)
+    orig_env = {k: os.environ.get(k) for k in ("GEMINI_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY", "GOOGLE_API_KEY")}
+    llm._MIN_INTERVAL.update(openrouter=0, groq=0, gemini=0)
     current_ask = llm.ask_json
-    # Force a deterministic 3-provider setup for this test
-    config.TIERS["fast"] = ("openrouter", "google/gemini-2.0-flash-exp:free")
-    config.TIERS["smart"] = ("gemini", "gemini-3.8-flash")
+    config.TIERS["fast"] = ("openrouter", config.OPENROUTER_MODELS[0])
+    config.TIERS["smart"] = ("gemini", "gemini-2.5-flash")
     config.TIERS["adversary"] = ("groq", "openai/gpt-oss-120b")
-    # Temporarily restore the real ask_json so routing logic is tested, not the mock
     llm.ask_json = _REAL_ASK
     try:
-        # All configured providers must be in the known set
-        assert set(p for p, _ in config.TIERS.values()) <= set(config.PROVIDERS), \
-            f"Unknown provider in TIERS: {config.TIERS}"
-        # adversary must be a different provider than smart
-        assert config.TIERS["adversary"][0] != config.TIERS["smart"][0], \
-            "adversary should be a different family than smart"
+        os.environ.update(GEMINI_API_KEY="x", GROQ_API_KEY="y", OPENROUTER_API_KEY="z")
 
-        # Give all three providers a fake key so _has_key() returns True
-        os.environ["GEMINI_API_KEY"] = "x"
-        os.environ["GROQ_API_KEY"] = "y"
-        os.environ["OPENROUTER_API_KEY"] = "z"
-
-        # adversary=groq: first slot must be groq; groq must NOT be first on oversized prompt
         plan = llm._plan("adversary", 100)
         assert plan[0][0] == "groq", f"Expected groq first in plan, got: {plan}"
         big = llm._plan("adversary", config.GROQ_MAX_INPUT_CHARS + 1)
         assert big[0][0] != "groq", f"Groq should be deprioritised for big prompts, got: {big}"
 
-        # Verify Groq is actually called and returns parsed JSON
         seen = {}
+
         async def fake_groq(system, user, model, max_tokens):
             seen["model"] = model
             return 'noise {"ok": true} noise'
@@ -301,25 +370,68 @@ def test_llm_routing():
         assert out == {"ok": True}, f"Expected {{ok: True}}, got {out}"
         assert seen["model"] == config.TIERS["adversary"][1]
 
-        # Verify fallback: groq 429 -> next provider succeeds
+        # groq 429 -> every retired OpenRouter model tried once -> gemini answers
         async def bad_groq(*a):
             raise llm.RateLimited(0)
+
         async def ok_gemini(*a):
             return '{"via": "gemini"}'
-        llm._CALLS["groq"] = bad_groq
-        llm._CALLS["gemini"] = ok_gemini
+
+        async def or_404(system, user, model, max_tokens):
+            seen.setdefault("or_models", []).append(model)
+            raise llm.ModelUnavailable("404 retired")
+        llm._CALLS.update(groq=bad_groq, gemini=ok_gemini, openrouter=or_404)
         result = asyncio.run(llm.ask_json("s", "u", "adversary"))
         assert result.get("via") == "gemini", f"Expected gemini fallback, got: {result}"
+        assert seen["or_models"] == config.OPENROUTER_MODELS, seen
+
+        # OpenRouter: a retired model, then a rate-limited one, fall through to the next free model (no sleep)
+        config.TIERS["smart"] = ("openrouter", config.OPENROUTER_MODELS[0])
+        tried = []
+
+        async def or_flaky(system, user, model, max_tokens):
+            tried.append(model)
+            if len(tried) == 1:
+                raise llm.ModelUnavailable("404")
+            if len(tried) == 2:
+                raise llm.RateLimited(30)
+            return '{"model": "%s"}' % model
+        llm._CALLS["openrouter"] = or_flaky
+        out = asyncio.run(llm.ask_json("s", "u", "smart"))
+        assert out["model"] == config.OPENROUTER_MODELS[2] and len(tried) == 3, (out, tried)
+
+        # Daily free quota exhausted: stop using OpenRouter after one request
+        tried.clear()
+
+        async def or_daily(system, user, model, max_tokens):
+            tried.append(model)
+            raise llm.ProviderUnavailable("daily free quota exhausted")
+        llm._CALLS["openrouter"] = or_daily
+        for k in ("GROQ_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
+            os.environ.pop(k, None)
+        try:
+            asyncio.run(llm.ask_json("s", "u", "smart"))
+            raise AssertionError("expected NoJsonReturned")
+        except llm.NoJsonReturned:
+            pass
+        assert len(tried) == 1, tried
     finally:
-        llm.ask_json = current_ask   # restore the fake_llm that setup_module installed
+        llm.ask_json = current_ask
         llm._CALLS.clear()
         llm._CALLS.update(orig_calls)
+        llm._MIN_INTERVAL.update(orig_interval)
         config.TIERS.clear()
         config.TIERS.update(orig_tiers)
+        for k, v in orig_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
 
 if __name__ == "__main__":
     setup()
-    for t in (test_mutation_labels, test_scrape_links, test_pipeline, test_langgraph_wiring, test_llm_routing):
+    for t in (test_mutation_labels, test_scrape_links, test_local_matching, test_json_extraction, test_pipeline,
+              test_single_call_pipeline, test_langgraph_wiring, test_llm_routing):
         t()
         print("PASS", t.__name__)

@@ -1,5 +1,6 @@
 """Evidence-weighted confidence. The LLM lists supporting/dissenting sources; code does the maths."""
 from .classify import PRIMARY_MIN_W, SOURCE_WEIGHTS
+from .outlets import outlet_tier
 
 
 def source_weight(st, sid):
@@ -8,7 +9,10 @@ def source_weight(st, sid):
             return r["weight"]
     e = next((x for x in st.pool.values() if x.id == sid), None)
     if e:
-        return SOURCE_WEIGHTS["news"] if e.source in ("news", "gdelt") else SOURCE_WEIGHTS["social"]
+        if e.source in ("bluesky", "reddit"):
+            return SOURCE_WEIGHTS["social"]
+        tier = outlet_tier(e.meta.get("outlet_domain") or e.meta.get("resolved_url") or e.url)
+        return SOURCE_WEIGHTS["fact_check"] if tier == "fact_check" else SOURCE_WEIGHTS["news"]
     return 0.3
 
 
