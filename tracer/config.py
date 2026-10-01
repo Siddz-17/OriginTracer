@@ -56,13 +56,13 @@ for _t, _p in _DEFAULTS.items():
     if _prov not in PROVIDERS:
         raise ValueError(f"{_t.upper()}_PROVIDER must be one of {PROVIDERS}, got {_prov!r}")
     TIERS[_t] = (_prov, os.getenv(f"{_t.upper()}_MODEL") or _DEFAULT_MODEL[_prov])
-GROQ_MAX_INPUT_CHARS = int(os.getenv("GROQ_MAX_INPUT_CHARS", "14000"))  # bigger prompts skip Groq
+GROQ_MAX_INPUT_CHARS = int(os.getenv("GROQ_MAX_INPUT_CHARS", "10000"))  # bigger prompts skip Groq
 LLM_FALLBACK = os.getenv("LLM_FALLBACK", "1") == "1"  # on repeated failure, try the next provider
 LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "180"))  # free reasoning models can be slow on big prompts
 
 # Evidence budget for the single analysis prompt (characters, ~4 chars/token).
-ANALYSIS_MAX_CHARS = int(os.getenv("ANALYSIS_MAX_CHARS", "28000"))
-ANALYSIS_MAX_ITEMS = int(os.getenv("ANALYSIS_MAX_ITEMS", "30"))
+ANALYSIS_MAX_CHARS = int(os.getenv("ANALYSIS_MAX_CHARS", "10000"))
+ANALYSIS_MAX_ITEMS = int(os.getenv("ANALYSIS_MAX_ITEMS", "20"))
 
 DEFAULT_FEEDS = [
     "https://feeds.bbci.co.uk/news/world/rss.xml",

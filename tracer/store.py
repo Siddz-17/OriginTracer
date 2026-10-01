@@ -39,6 +39,10 @@ refs = Table("refs", meta,
 
 class Store:
     def __init__(self, url):
+        if url and url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql+psycopg://", 1)
+        elif url and url.startswith("postgresql://") and not url.startswith("postgresql+"):
+            url = url.replace("postgresql://", "postgresql+psycopg://", 1)
         self.engine = create_engine(url, future=True, pool_pre_ping=True)
         meta.create_all(self.engine)
 

@@ -152,7 +152,7 @@ async def _call_openai_compat(c, url, headers, body, provider_name):
         raise RateLimited(min(wait, 60))
     if r.status_code in (401, 402, 403):
         raise ProviderUnavailable(f"{provider_name} HTTP {r.status_code}: {_error_text(r)[:200]}")
-    if r.status_code in (400, 404, 422):
+    if r.status_code in (400, 404, 413, 422):
         raise ModelUnavailable(f"{provider_name} HTTP {r.status_code}: {_error_text(r)[:300]}")
     r.raise_for_status()
     data = r.json()
