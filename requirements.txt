@@ -1,0 +1,13 @@
+httpx
+google-genai          # Gemini
+# Groq is called over REST with httpx; no SDK needed
+fastapi
+uvicorn[standard]
+pydantic>=2
+sqlalchemy>=2
+psycopg[binary]      # Postgres driver (SQLite needs nothing)
+langgraph
+trafilatura
+beautifulsoup4
+googlenewsdecoder     # fast Google News URL decoding (~200ms vs 17s Playwright)
+playwright           # optional: USE_PLAYWRIGHT=1, then `playwright install chromium`

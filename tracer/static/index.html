@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NOTHING // Narrative Origin Tracer (NT-01)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DotGothic16&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="nothing-theme">
+  <!-- Subtle Background Grid & Dot Matrix Overlay -->
+  <div class="bg-matrix"></div>
+  <div class="bg-vignette"></div>
+
+  <div class="os-container">
+    <!-- Top System Header Bar -->
+    <header class="sys-bar" id="sys-header">
+      <div class="sys-left">
+        <span class="brand-dot"></span>
+        <span class="brand-text">NOTHING <span class="tag-os">(NT-01)</span></span>
+        <span class="sys-sep">/</span>
+        <span class="sys-title">NARRATIVE ORIGIN TRACER</span>
+      </div>
+
+      <div class="sys-center">
+        <div class="glyph-status-pill">
+          <span class="live-led" id="global-led"></span>
+          <span class="status-msg" id="global-status-text">STANDBY // READY</span>
+        </div>
+      </div>
+
+      <div class="sys-right">
+        <button class="sound-toggle-btn" id="sound-btn" title="Toggle Haptic Clicks" aria-label="Toggle Sound">
+          <span class="sound-icon" id="sound-icon">AUDIO [ON]</span>
+        </button>
+        <span class="sys-sep">/</span>
+        <span class="clock-display" id="clock-display">00:00:00 UTC</span>
+      </div>
+    </header>
+
+    <!-- Main Bento Grid Layout -->
+    <main class="bento-grid">
+
+      <!-- Bento 1: Query Input & Controls (Spans 8 cols on desktop) -->
+      <section class="bento-card card-input" id="card-input">
+        <div class="card-header">
+          <div class="tape-label">01 // TRACE CONSOLE</div>
+          <div class="term-controls">
+            <select class="term-mini-select" id="history-runs-select" title="Load past run" style="display:none;">
+              <option value="">HISTORY (0)</option>
+            </select>
+            <button class="term-mini-btn" id="load-sample-btn" title="Load latest local report">LOAD CACHED</button>
+          </div>
+        </div>
+
+        <div class="input-body">
+          <div class="field-group">
+            <label for="claim-input" class="ndot-label">INPUT CLAIM OR NARRATIVE</label>
+            <div class="input-wrapper">
+              <input 
+                type="text" 
+                id="claim-input" 
+                class="nothing-input" 
+                placeholder="Enter claim to trace (e.g. omani pilot attacks indian co pilot)..."
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <button class="clear-btn" id="clear-input-btn" title="Clear input">×</button>
+            </div>
+          </div>
+
+          <!-- Quick Samples Pill Row -->
+          <div class="samples-row">
+            <span class="samples-tag">PRESETS:</span>
+            <button class="sample-pill" data-query="omani pilot attacks indian co pilot">Omani pilot attacks Indian co-pilot</button>
+            <button class="sample-pill" data-query="Apple is shutting down iCloud">Apple shutting down iCloud</button>
+            <button class="sample-pill" data-query="NASA confirms asteroid collision date">NASA confirms asteroid collision</button>
+          </div>
+
+          <!-- Controls Sub-Row -->
+          <div class="params-row">
+            <div class="param-widget">
+              <span class="param-title">ROUNDS</span>
+              <div class="pill-selector" id="rounds-selector">
+                <button class="pill-opt active" data-val="1">1</button>
+                <button class="pill-opt" data-val="2">2</button>
+                <button class="pill-opt" data-val="3">3</button>
+              </div>
+            </div>
+
+            <div class="param-widget">
+              <span class="param-title">CITATION DEPTH</span>
+              <div class="pill-selector" id="depth-selector">
+                <button class="pill-opt" data-val="2">2</button>
+                <button class="pill-opt active" data-val="3">3</button>
+                <button class="pill-opt" data-val="4">4</button>
+              </div>
+            </div>
+
+            <div class="param-widget">
+              <span class="param-title">PLAYWRIGHT REDIRECTS</span>
+              <button class="toggle-pill active" id="playwright-toggle">
+                <span class="toggle-led"></span>
+                <span class="toggle-text">ENABLED</span>
+              </button>
+            </div>
+
+            <div class="action-widget">
+              <button class="btn-trace" id="start-trace-btn">
+                <span class="btn-text">INITIALIZE TRACE</span>
+                <span class="btn-arrow">→</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Bento 2: Nothing Glyph Visualizer & Agent Stage (Spans 4 cols on desktop) -->
+      <section class="bento-card card-glyph" id="card-glyph">
+        <div class="card-header">
+          <div class="tape-label">GLYPH // MATRIX</div>
+          <div class="glyph-mode-indicator" id="glyph-mode">IDLE</div>
+        </div>
+
+        <div class="glyph-showcase">
+          <!-- Stylized Nothing Phone (2) Glyph SVG matrix -->
+          <div class="glyph-phone-frame">
+            <svg class="glyph-svg" viewBox="0 0 200 380" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <!-- Background chassis contour -->
+              <rect x="10" y="10" width="180" height="360" rx="36" stroke="#222" stroke-width="2" fill="#0d0d0d"/>
+              <rect x="18" y="18" width="164" height="344" rx="28" stroke="#181818" stroke-width="1" fill="#080808"/>
+              
+              <!-- Camera module glyph -->
+              <circle cx="56" cy="56" r="28" stroke="#222" stroke-width="3" stroke-dasharray="2 3" class="glyph-elem" id="glyph-cam-1"/>
+              <circle cx="56" cy="56" r="16" stroke="#333" stroke-width="2"/>
+              <circle cx="56" cy="116" r="28" stroke="#222" stroke-width="3" stroke-dasharray="2 3" class="glyph-elem" id="glyph-cam-2"/>
+              <circle cx="56" cy="116" r="16" stroke="#333" stroke-width="2"/>
+
+              <!-- Diagonal top right accent -->
+              <path d="M 130 35 L 165 70" stroke="#222" stroke-width="4" stroke-linecap="round" class="glyph-elem" id="glyph-diag"/>
+
+              <!-- Central Arc C-glyph -->
+              <path d="M 100 140 A 45 45 0 1 1 100 230" stroke="#222" stroke-width="4.5" stroke-linecap="round" class="glyph-elem" id="glyph-arc-left"/>
+              <path d="M 100 140 A 45 45 0 0 1 100 230" stroke="#222" stroke-width="4.5" stroke-linecap="round" stroke-dasharray="4 6" class="glyph-elem" id="glyph-arc-right"/>
+
+              <!-- Lower Vertical Bar and Exclamation Point -->
+              <line x1="100" y1="260" x2="100" y2="310" stroke="#222" stroke-width="4.5" stroke-linecap="round" class="glyph-elem" id="glyph-line"/>
+              <circle cx="100" cy="335" r="4.5" fill="#222" class="glyph-elem" id="glyph-dot"/>
+
+              <!-- Ambient Center LED -->
+              <circle cx="100" cy="185" r="3" fill="#D71921" class="glyph-red-indicator" id="glyph-red"/>
+            </svg>
+          </div>
+
+          <div class="glyph-telemetry">
+            <div class="tele-item">
+              <span class="tele-label">PIPELINE STAGE</span>
+              <span class="tele-value" id="current-stage">STANDBY</span>
+            </div>
+            <div class="tele-item">
+              <span class="tele-label">ROUND</span>
+              <span class="tele-value" id="current-round">0 / 0</span>
+            </div>
+            <div class="tele-item">
+              <span class="tele-label">LLM ENGINE</span>
+              <span class="tele-value text-red">GROQ // OSS-120B</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Bento 2: Main Verdict & Confidence (6 cols) -->
+      <section class="bento-card card-verdict" id="card-verdict">
+        <div class="card-header">
+          <div class="tape-label">02 // VERDICT (FINAL ARBITRATION)</div>
+          <span class="badge-verdict-type" id="verdict-type-tag">AWAITING TRACE</span>
+        </div>
+
+        <div class="verdict-display-box">
+          <div class="verdict-banner">
+            <h1 class="verdict-title ndot" id="verdict-text">--</h1>
+            <p class="verdict-rationale" id="verdict-rationale">Submit a claim to compute confidence and cross-verify with global news and primary archives.</p>
+          </div>
+
+          <div class="verdict-stats-row">
+            <div class="stat-dial-box">
+              <svg class="dial-svg" viewBox="0 0 100 100">
+                <circle class="dial-bg" cx="50" cy="50" r="42"/>
+                <circle class="dial-progress" id="confidence-circle" cx="50" cy="50" r="42" stroke-dasharray="264" stroke-dashoffset="264"/>
+              </svg>
+              <div class="dial-content">
+                <span class="dial-val ndot" id="confidence-val">0%</span>
+                <span class="dial-lbl">CONFIDENCE</span>
+              </div>
+            </div>
+
+            <div class="stat-counts-column">
+              <div class="count-pill">
+                <span class="count-label">PRIMARY SOURCES</span>
+                <span class="count-num" id="stat-primary">0</span>
+              </div>
+              <div class="count-pill">
+                <span class="count-label">SECONDARY / NEWS</span>
+                <span class="count-num" id="stat-secondary">0</span>
+              </div>
+              <div class="count-pill">
+                <span class="count-label">CONTRADICTIONS</span>
+                <span class="count-num text-red" id="stat-contradictions">0</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Bento 3: Origin Radar & Time Anchor (6 cols) -->
+      <section class="bento-card card-origin" id="card-origin">
+        <div class="card-header">
+          <div class="tape-label">03 // PROBABLE ORIGIN & LINEAGE</div>
+          <span class="badge-origin-prob" id="origin-prob-badge">0% PROBABILITY</span>
+        </div>
+
+        <div class="origin-body">
+          <div class="origin-spotlight" id="origin-spotlight">
+            <div class="origin-channel-badge" id="origin-channel">FIRST EMERGENCE</div>
+            <div class="origin-domain ndot" id="origin-domain">TEMPORAL ROOT RECORD</div>
+            <div class="origin-timestamp" id="origin-ts">--</div>
+            <div class="origin-snippet" id="origin-snippet">The earliest chronological record and mutation context will appear here.</div>
+          </div>
+
+          <div class="unobserved-meter-box">
+            <div class="meter-header">
+              <span>UNOBSERVED ORIGIN RISK</span>
+              <span id="unobserved-val">0%</span>
+            </div>
+            <div class="meter-bar">
+              <div class="meter-fill" id="unobserved-fill" style="width: 0%"></div>
+            </div>
+            <p class="meter-hint">Probability the true root preceded all indexed archives or news feeds.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Bento 4: Sub-claims Breakdown Matrix (12 cols) -->
+      <section class="bento-card card-subclaims" id="card-subclaims">
+        <div class="card-header">
+          <div class="tape-label">04 // FACT-CHECKED SUB-CLAIMS</div>
+          <span class="count-tag" id="subclaims-count">0 DECOMPOSED CLAIMS</span>
+        </div>
+
+        <div class="subclaims-grid" id="subclaims-container">
+          <div class="empty-state">No sub-claim decomposition yet. Initializing a trace will break claims into granular atomic propositions.</div>
+        </div>
+      </section>
+
+      <!-- Bento 5: Sources Analyzed (8 cols) - Just Number of Sources, No Origins/Domains -->
+      <section class="bento-card card-sources" id="card-sources">
+        <div class="card-header">
+          <div class="tape-label">05 // SOURCES ANALYZED</div>
+          <span class="count-tag" id="sources-total-tag">0 TOTAL SOURCES</span>
+        </div>
+
+        <div class="sources-metric-box">
+          <div class="sources-hero-row">
+            <div class="sources-big-number">
+              <span class="sources-hero-val ndot" id="hero-sources-count">0</span>
+              <span class="sources-hero-lbl">SOURCES CROSS-REFERENCED</span>
+            </div>
+            <div class="sources-bar-container">
+              <div class="sources-bar-meta">
+                <span>EVIDENCE PROPORTION BREAKDOWN</span>
+                <span id="sources-ratio-text">0 PRIMARY · 0 SECONDARY</span>
+              </div>
+              <div class="sources-multi-bar">
+                <div class="sources-bar-slice primary" id="bar-slice-primary" style="width: 0%"></div>
+                <div class="sources-bar-slice secondary" id="bar-slice-secondary" style="width: 0%"></div>
+                <div class="sources-bar-slice contra" id="bar-slice-contra" style="width: 0%"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="sources-grid-stats">
+            <div class="source-stat-card">
+              <span class="sstat-title">TOTAL SOURCES</span>
+              <span class="sstat-val ndot" id="sstat-total">0</span>
+              <span class="sstat-desc">Analyzed across public index</span>
+            </div>
+            <div class="source-stat-card">
+              <span class="sstat-title">PRIMARY SOURCES</span>
+              <span class="sstat-val ndot text-green" id="sstat-primary">0</span>
+              <span class="sstat-desc">Official / primary tier records</span>
+            </div>
+            <div class="source-stat-card">
+              <span class="sstat-title">SECONDARY SOURCES</span>
+              <span class="sstat-val ndot" id="sstat-secondary">0</span>
+              <span class="sstat-desc">Supporting report references</span>
+            </div>
+            <div class="source-stat-card">
+              <span class="sstat-title">CONTRADICTING</span>
+              <span class="sstat-val ndot text-red" id="sstat-contra">0</span>
+              <span class="sstat-desc">Dissenting source citations</span>
+            </div>
+          </div>
+
+          <div class="sources-privacy-notice">
+            <span class="notice-dot"></span>
+            <span>Source attribution masked. Number of analyzed sources displayed without geographic or publisher origin details.</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Bento 6: System Spec & Raw Report Drawer (4 cols) -->
+      <section class="bento-card card-raw" id="card-raw">
+        <div class="card-header">
+          <div class="tape-label">06 // REPORT & TELEMETRY</div>
+          <div class="tab-toggles">
+            <button class="tab-btn active" id="tab-md-btn">MARKDOWN</button>
+            <button class="tab-btn" id="tab-json-btn">JSON</button>
+          </div>
+        </div>
+
+        <div class="raw-body">
+          <div class="raw-actions">
+            <button class="copy-raw-btn" id="copy-report-btn">COPY TO CLIPBOARD</button>
+          </div>
+          <pre class="raw-code" id="raw-display">/* Full generated report output will be shown here. */</pre>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Bottom Status Strip -->
+    <footer class="sys-footer">
+      <div class="footer-left">
+        <span class="ndot">NOTHING OS // NT-01 TRACER</span>
+        <span class="footer-sep">·</span>
+        <span>RESEARCH BUILD v0.3.0</span>
+      </div>
+      <div class="footer-center">
+        <span>ENGINE: GROQ (LLAMA/GPT-OSS) + GEMINI 3.8</span>
+      </div>
+      <div class="footer-right">
+        <span id="backend-ping">BACKEND: CHECKING...</span>
+      </div>
+    </footer>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
