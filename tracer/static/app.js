@@ -132,14 +132,6 @@ const dom = {
   statPrimary: document.getElementById("stat-primary"),
   statSecondary: document.getElementById("stat-secondary"),
   statContra: document.getElementById("stat-contradictions"),
-  // Origin
-  originBadge: document.getElementById("origin-prob-badge"),
-  originDomain: document.getElementById("origin-domain"),
-  originTs: document.getElementById("origin-ts"),
-  originSnippet: document.getElementById("origin-snippet"),
-  originChannel: document.getElementById("origin-channel"),
-  unobservedVal: document.getElementById("unobserved-val"),
-  unobservedFill: document.getElementById("unobserved-fill"),
   // Subclaims
   subclaimsContainer: document.getElementById("subclaims-container"),
   subclaimsCount: document.getElementById("subclaims-count"),
@@ -319,31 +311,7 @@ function renderReportData(data) {
   dom.statSecondary.textContent = sCount;
   dom.statContra.textContent = res.contradictions ?? scores.contradictions ?? 0;
 
-  // 4. Origin Card (Number of origins / Emergence info only, NO domain or publisher attribution)
-  const orig = (res.origin && res.origin.likely) ? res.origin.likely : null;
-  if (orig) {
-    const p = Math.round(((orig.prob !== undefined ? orig.prob : (res.origin && res.origin.probability)) || 0) * 100);
-    dom.originBadge.textContent = `${p}% EMERGENCE PROBABILITY`;
-    dom.originDomain.textContent = "TEMPORAL ROOT RECORD";
-    const rawOriginTs = orig.orig_ts || orig.time || orig.ts;
-    dom.originTs.textContent = rawOriginTs ? new Date(rawOriginTs).toUTCString() : "--";
-    dom.originChannel.textContent = "TIMESTAMP ANCHOR";
-    const snippet = orig.text || (res.origin && res.origin.statement) || (res.origin && res.origin.summary) || "";
-    dom.originSnippet.textContent = snippet.length > 220 ? snippet.slice(0, 220) + "..." : (snippet || "Initial record established.");
-  } else {
-    dom.originBadge.textContent = "0% PROBABILITY";
-    dom.originDomain.textContent = "UNDETERMINED";
-    dom.originTs.textContent = "--";
-    dom.originSnippet.textContent = (res.origin && res.origin.statement) || "No definitive earliest origin identified.";
-  }
-
-  // Unobserved Origin risk
-  const unobsVal = (res.origin && res.origin.p_unobserved !== undefined) ? res.origin.p_unobserved : 0.06;
-  const unobs = Math.round(unobsVal * 100);
-  dom.unobservedVal.textContent = unobs + "%";
-  dom.unobservedFill.style.width = unobs + "%";
-
-  // 5. Sub-claims Cards (supports res.subclaims or res.fact_check.subclaims)
+  // Sub-claims Cards (supports res.subclaims or res.fact_check.subclaims)
   const subclaims = res.subclaims || (res.fact_check && res.fact_check.subclaims) || [];
   renderSubclaims(subclaims);
 
