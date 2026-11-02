@@ -4,7 +4,7 @@ google-genai          # Gemini
 fastapi
 uvicorn[standard]
 pydantic>=2
-sqlalchemy>=2
+sqlalchemy>=2.1.6
 psycopg[binary]      # Postgres driver (SQLite needs nothing)
 langgraph
 trafilatura
