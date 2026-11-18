@@ -1,331 +1,176 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>NOTHING // Narrative Origin Tracer (NT-01)</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DotGothic16&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OriginTracer: where did this claim come from, and is it true?</title>
+  <meta name="description" content="Trace a viral claim to its earliest source, see how it spread, and fact-check it against reputable evidence." />
+  <link rel="stylesheet" href="/style.css" />
 </head>
-<body class="nothing-theme">
-  <!-- Subtle Background Grid & Dot Matrix Overlay -->
-  <div class="bg-matrix"></div>
-  <div class="bg-vignette"></div>
+<body>
+  <header class="topbar">
+    <div class="wrap">
+      <a class="brand" href="/" aria-label="OriginTracer home"><span class="brand-mark" aria-hidden="true"></span>OriginTracer</a>
+      <span class="spacer"></span>
+      <span class="status-dot" id="health" title="Server status">Checking server…</span>
+      <button class="btn" id="history-btn" aria-expanded="false" aria-controls="history">Recent runs</button>
+    </div>
+  </header>
 
-  <div class="os-container">
-    <!-- Top System Header Bar -->
-    <header class="sys-bar" id="sys-header">
-      <div class="sys-left">
-        <span class="brand-dot"></span>
-        <span class="brand-text">NOTHING <span class="tag-os">(NT-01)</span></span>
-        <span class="sys-sep">/</span>
-        <span class="sys-title">NARRATIVE ORIGIN TRACER</span>
-      </div>
-
-      <div class="sys-center">
-        <div class="glyph-status-pill">
-          <span class="live-led" id="global-led"></span>
-          <span class="status-msg" id="global-status-text">STANDBY // READY</span>
+  <main class="wrap">
+    <section class="hero" aria-labelledby="hero-title">
+      <h1 id="hero-title">Where did this claim come from, and is it true?</h1>
+      <p>Paste a claim. OriginTracer searches news, fact-checkers, archives and social posts, finds the earliest
+        source, and checks the claim against the best evidence it can find.</p>
+      <form class="search" id="trace-form" autocomplete="off">
+        <label for="claim" class="sr-only">Claim to check</label>
+        <input id="claim" name="claim" type="text" required minlength="3" maxlength="1000"
+               placeholder="e.g. Cristiano Ronaldo retires from the Portugal national team" />
+        <button class="btn btn-primary" id="trace-btn" type="submit">Trace claim</button>
+      </form>
+      <div class="search-extras">
+        <div class="chips" id="examples" aria-label="Example claims">
+          <span class="faint">Try:</span>
+          <button class="chip" type="button">NASA confirmed Earth will experience 6 days of total darkness</button>
+          <button class="chip" type="button">Chandrayaan-3 landed near the Moon's south pole</button>
+          <button class="chip" type="button">Drinking bleach cures COVID-19</button>
         </div>
       </div>
-
-      <div class="sys-right">
-        <button class="sound-toggle-btn" id="sound-btn" title="Toggle Haptic Clicks" aria-label="Toggle Sound">
-          <span class="sound-icon" id="sound-icon">AUDIO [ON]</span>
-        </button>
-        <span class="sys-sep">/</span>
-        <span class="clock-display" id="clock-display">00:00:00 UTC</span>
-      </div>
-    </header>
-
-    <!-- Main Bento Grid Layout -->
-    <main class="bento-grid">
-
-      <!-- Bento 1: Query Input & Controls (Spans 8 cols on desktop) -->
-      <section class="bento-card card-input" id="card-input">
-        <div class="card-header">
-          <div class="tape-label">01 // TRACE CONSOLE</div>
-          <div class="term-controls">
-            <select class="term-mini-select" id="history-runs-select" title="Load past run" style="display:none;">
-              <option value="">HISTORY (0)</option>
-            </select>
-            <button class="term-mini-btn" id="load-sample-btn" title="Load latest local report">LOAD CACHED</button>
+      <details class="more" style="margin-top:10px">
+        <summary>Add an image or adjust the search</summary>
+        <div class="more-grid">
+          <div class="field">
+            <label for="image-url">Image the claim is about (public URL, optional)</label>
+            <input id="image-url" type="url" placeholder="https://…/photo.jpg" />
+          </div>
+          <div class="field">
+            <label for="rounds">Search rounds</label>
+            <select id="rounds"><option value="1">1 (faster)</option><option value="2" selected>2 (default)</option><option value="3">3 (broader)</option></select>
+          </div>
+          <div class="field">
+            <label for="depth">Citation depth</label>
+            <select id="depth"><option value="1">1</option><option value="2">2</option><option value="3" selected>3 (default)</option></select>
           </div>
         </div>
+      </details>
+    </section>
 
-        <div class="input-body">
-          <div class="field-group">
-            <label for="claim-input" class="ndot-label">INPUT CLAIM OR NARRATIVE</label>
-            <div class="input-wrapper">
-              <input 
-                type="text" 
-                id="claim-input" 
-                class="nothing-input" 
-                placeholder="Enter claim to trace (e.g. omani pilot attacks indian co pilot)..."
-                autocomplete="off"
-                spellcheck="false"
-              />
-              <button class="clear-btn" id="clear-input-btn" title="Clear input">×</button>
-            </div>
+    <section class="card hidden" id="history" aria-labelledby="history-title">
+      <div class="section-head"><h2 id="history-title">Recent runs</h2><span class="spacer"></span>
+        <button class="btn" id="history-close">Close</button></div>
+      <ul class="list history" id="history-list"></ul>
+    </section>
+
+    <section class="card hidden" id="progress" aria-live="polite" aria-labelledby="progress-title">
+      <div class="section-head">
+        <h2 id="progress-title">Tracing…</h2><span class="spacer"></span>
+        <span class="muted" id="elapsed">0:00</span>
+      </div>
+      <p class="sub" id="progress-claim"></p>
+      <div class="steps" id="steps">
+        <div class="step" data-step="search"><div class="bar"></div>Searching</div>
+        <div class="step" data-step="match"><div class="bar"></div>Matching</div>
+        <div class="step" data-step="origin"><div class="bar"></div>Tracing origin</div>
+        <div class="step" data-step="evidence"><div class="bar"></div>Reading sources</div>
+        <div class="step" data-step="analysis"><div class="bar"></div>Fact-checking</div>
+      </div>
+      <div class="progress-meta"><span id="progress-note">Usually takes 2–5 minutes.</span><span id="progress-count"></span></div>
+      <details class="more" style="margin-top:8px"><summary>Activity log</summary><div class="log" id="log"></div></details>
+    </section>
+
+    <div id="error-box"></div>
+
+    <div id="report" class="hidden">
+      <nav class="tabs" id="tabs" aria-label="Report sections">
+        <a href="#s-verdict" class="on">Verdict</a>
+        <a href="#s-evidence">Evidence</a>
+        <a href="#s-origin">Origin &amp; spread</a>
+        <a href="#s-subclaims">Sub-claims</a>
+        <a href="#s-image" id="tab-image" class="hidden">Image</a>
+        <a href="#s-export">Export</a>
+      </nav>
+
+      <section class="card" id="s-verdict" aria-labelledby="verdict-h">
+        <h2 id="verdict-h" class="sr-only">Verdict</h2>
+        <div class="verdict">
+          <div>
+            <p class="claim-quote">Claim: <q id="v-claim"></q></p>
+            <span class="badge" id="v-badge"></span>
+            <p class="rationale" id="v-rationale"></p>
+            <ul class="notes" id="v-notes"></ul>
           </div>
-          <div class="field-group">
-            <label for="image-input" class="ndot-label">IMAGE URL (OPTIONAL: TRACE WHERE A PHOTO FIRST APPEARED)</label>
-            <div class="input-wrapper">
-              <input type="url" id="image-input" class="nothing-input" autocomplete="off" spellcheck="false"
-                     placeholder="https://... public link to the image the claim is about" />
-            </div>
-          </div>
-
-          <!-- Quick Samples Pill Row -->
-          <div class="samples-row">
-            <span class="samples-tag">PRESETS:</span>
-            <button class="sample-pill" data-query="omani pilot attacks indian co pilot">Omani pilot attacks Indian co-pilot</button>
-            <button class="sample-pill" data-query="Apple is shutting down iCloud">Apple shutting down iCloud</button>
-            <button class="sample-pill" data-query="NASA confirms asteroid collision date">NASA confirms asteroid collision</button>
-          </div>
-
-          <!-- Controls Sub-Row -->
-          <div class="params-row">
-            <div class="param-widget">
-              <span class="param-title">ROUNDS</span>
-              <div class="pill-selector" id="rounds-selector">
-                <button class="pill-opt active" data-val="1">1</button>
-                <button class="pill-opt" data-val="2">2</button>
-                <button class="pill-opt" data-val="3">3</button>
-              </div>
-            </div>
-
-            <div class="param-widget">
-              <span class="param-title">CITATION DEPTH</span>
-              <div class="pill-selector" id="depth-selector">
-                <button class="pill-opt" data-val="2">2</button>
-                <button class="pill-opt active" data-val="3">3</button>
-                <button class="pill-opt" data-val="4">4</button>
-              </div>
-            </div>
-
-            <div class="param-widget">
-              <span class="param-title">PLAYWRIGHT REDIRECTS</span>
-              <button class="toggle-pill active" id="playwright-toggle">
-                <span class="toggle-led"></span>
-                <span class="toggle-text">ENABLED</span>
-              </button>
-            </div>
-
-            <div class="action-widget">
-              <button class="btn-trace" id="start-trace-btn">
-                <span class="btn-text">INITIALIZE TRACE</span>
-                <span class="btn-arrow">→</span>
-              </button>
-            </div>
-          </div>
+          <aside class="conf" aria-label="Confidence">
+            <div class="lab">Confidence</div>
+            <div class="num" id="c-num">–</div>
+            <div class="meter" role="meter" aria-valuemin="0" aria-valuemax="100" id="c-meter"><i id="c-bar" style="width:0"></i></div>
+            <ul id="c-why"></ul>
+          </aside>
         </div>
       </section>
 
-      <!-- Bento 2: Nothing Glyph Visualizer & Agent Stage (Spans 4 cols on desktop) -->
-      <section class="bento-card card-glyph" id="card-glyph">
-        <div class="card-header">
-          <div class="tape-label">GLYPH // MATRIX</div>
-          <div class="glyph-mode-indicator" id="glyph-mode">IDLE</div>
-        </div>
-
-        <div class="glyph-showcase">
-          <!-- Stylized Nothing Phone (2) Glyph SVG matrix -->
-          <div class="glyph-phone-frame">
-            <svg class="glyph-svg" viewBox="0 0 200 380" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <!-- Background chassis contour -->
-              <rect x="10" y="10" width="180" height="360" rx="36" stroke="#222" stroke-width="2" fill="#0d0d0d"/>
-              <rect x="18" y="18" width="164" height="344" rx="28" stroke="#181818" stroke-width="1" fill="#080808"/>
-              
-              <!-- Camera module glyph -->
-              <circle cx="56" cy="56" r="28" stroke="#222" stroke-width="3" stroke-dasharray="2 3" class="glyph-elem" id="glyph-cam-1"/>
-              <circle cx="56" cy="56" r="16" stroke="#333" stroke-width="2"/>
-              <circle cx="56" cy="116" r="28" stroke="#222" stroke-width="3" stroke-dasharray="2 3" class="glyph-elem" id="glyph-cam-2"/>
-              <circle cx="56" cy="116" r="16" stroke="#333" stroke-width="2"/>
-
-              <!-- Diagonal top right accent -->
-              <path d="M 130 35 L 165 70" stroke="#222" stroke-width="4" stroke-linecap="round" class="glyph-elem" id="glyph-diag"/>
-
-              <!-- Central Arc C-glyph -->
-              <path d="M 100 140 A 45 45 0 1 1 100 230" stroke="#222" stroke-width="4.5" stroke-linecap="round" class="glyph-elem" id="glyph-arc-left"/>
-              <path d="M 100 140 A 45 45 0 0 1 100 230" stroke="#222" stroke-width="4.5" stroke-linecap="round" stroke-dasharray="4 6" class="glyph-elem" id="glyph-arc-right"/>
-
-              <!-- Lower Vertical Bar and Exclamation Point -->
-              <line x1="100" y1="260" x2="100" y2="310" stroke="#222" stroke-width="4.5" stroke-linecap="round" class="glyph-elem" id="glyph-line"/>
-              <circle cx="100" cy="335" r="4.5" fill="#222" class="glyph-elem" id="glyph-dot"/>
-
-              <!-- Ambient Center LED -->
-              <circle cx="100" cy="185" r="3" fill="#D71921" class="glyph-red-indicator" id="glyph-red"/>
-            </svg>
-          </div>
-
-          <div class="glyph-telemetry">
-            <div class="tele-item">
-              <span class="tele-label">PIPELINE STAGE</span>
-              <span class="tele-value" id="current-stage">STANDBY</span>
-            </div>
-            <div class="tele-item">
-              <span class="tele-label">ROUND</span>
-              <span class="tele-value" id="current-round">0 / 0</span>
-            </div>
-            <div class="tele-item">
-              <span class="tele-label">LLM ENGINE</span>
-              <span class="tele-value text-red">GROQ // OSS-120B</span>
-            </div>
+      <section class="card" id="s-evidence" aria-labelledby="ev-h">
+        <div class="section-head">
+          <h2 id="ev-h">Evidence</h2><span class="muted" id="ev-count"></span><span class="spacer"></span>
+          <div class="chips" id="ev-filter" role="group" aria-label="Filter evidence">
+            <button class="chip active" data-f="all">All</button>
+            <button class="chip" data-f="debunk">Debunks</button>
+            <button class="chip" data-f="support">Supports</button>
+            <button class="chip" data-f="report">Reports</button>
+            <button class="chip" data-f="fact_check">Fact-checkers</button>
           </div>
         </div>
+        <p class="sub">The highest-ranked sources the analysis read, best first. Stance is what each source says about the claim.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Date</th><th>Source</th><th>Headline</th><th>Stance</th></tr></thead>
+          <tbody id="ev-rows"></tbody>
+        </table></div>
       </section>
 
-      <!-- Bento 2: Main Verdict & Confidence (6 cols) -->
-      <section class="bento-card card-verdict" id="card-verdict">
-        <div class="card-header">
-          <div class="tape-label">02 // VERDICT (FINAL ARBITRATION)</div>
-          <span class="badge-verdict-type" id="verdict-type-tag">AWAITING TRACE</span>
-        </div>
-
-        <div class="verdict-display-box">
-          <div class="verdict-banner">
-            <h1 class="verdict-title ndot" id="verdict-text">--</h1>
-            <p class="verdict-rationale" id="verdict-rationale">Submit a claim to compute confidence and cross-verify with global news and primary archives.</p>
-            <div id="extra-panel"></div>
-          </div>
-
-          <div class="verdict-stats-row">
-            <div class="stat-dial-box">
-              <svg class="dial-svg" viewBox="0 0 100 100">
-                <circle class="dial-bg" cx="50" cy="50" r="42"/>
-                <circle class="dial-progress" id="confidence-circle" cx="50" cy="50" r="42" stroke-dasharray="264" stroke-dashoffset="264"/>
-              </svg>
-              <div class="dial-content">
-                <span class="dial-val ndot" id="confidence-val">0%</span>
-                <span class="dial-lbl">CONFIDENCE</span>
-              </div>
-            </div>
-
-            <div class="stat-counts-column">
-              <div class="count-pill">
-                <span class="count-label">PRIMARY SOURCES</span>
-                <span class="count-num" id="stat-primary">0</span>
-              </div>
-              <div class="count-pill">
-                <span class="count-label">SECONDARY / NEWS</span>
-                <span class="count-num" id="stat-secondary">0</span>
-              </div>
-              <div class="count-pill">
-                <span class="count-label">CONTRADICTIONS</span>
-                <span class="count-num text-red" id="stat-contradictions">0</span>
-              </div>
+      <section class="card" id="s-origin" aria-labelledby="or-h">
+        <h2 id="or-h">Origin &amp; spread</h2>
+        <p class="sub">The earliest item found that states the claim, and how coverage grew over time.</p>
+        <div class="origin-grid">
+          <div class="origin-main" id="or-main"></div>
+          <div>
+            <h3>Coverage over time</h3>
+            <div id="chart"></div>
+            <div class="legend">
+              <span style="--c: var(--report)">Reports</span><span style="--c: var(--debunk)">Debunks</span>
+              <span style="--c: var(--support)">Fact-check: true</span><span class="lg-joke">Satire</span>
             </div>
           </div>
         </div>
+        <div class="cols">
+          <div><h3>Biggest amplifiers</h3><ul class="list" id="amp"></ul></div>
+          <div><h3>Versions of the claim</h3><ul class="list" id="variants"></ul></div>
+        </div>
+        <div style="margin-top:18px"><h3>Search coverage</h3><div class="stats" id="coverage"></div></div>
       </section>
 
-      <!-- Bento 3: Sub-claims Breakdown Matrix (12 cols) -->
-      <section class="bento-card card-subclaims" id="card-subclaims">
-        <div class="card-header">
-          <div class="tape-label">03 // FACT-CHECKED SUB-CLAIMS</div>
-          <span class="count-tag" id="subclaims-count">0 DECOMPOSED CLAIMS</span>
-        </div>
-
-        <div class="subclaims-grid" id="subclaims-container">
-          <div class="empty-state">No sub-claim decomposition yet. Initializing a trace will break claims into granular atomic propositions.</div>
-        </div>
+      <section class="card" id="s-subclaims" aria-labelledby="sc-h">
+        <h2 id="sc-h">Sub-claims</h2>
+        <p class="sub">The claim split into checkable parts. Cited sources are outlined green when they back the
+          verdict and red when they point the other way.</p>
+        <div id="sc-list"></div>
+        <div id="missing" style="margin-top:12px"></div>
       </section>
 
-      <!-- Bento 4: Sources Analyzed (8 cols) - Just Number of Sources, No Origins/Domains -->
-      <section class="bento-card card-sources" id="card-sources">
-        <div class="card-header">
-          <div class="tape-label">04 // SOURCES ANALYZED</div>
-          <span class="count-tag" id="sources-total-tag">0 TOTAL SOURCES</span>
-        </div>
-
-        <div class="sources-metric-box">
-          <div class="sources-hero-row">
-            <div class="sources-big-number">
-              <span class="sources-hero-val ndot" id="hero-sources-count">0</span>
-              <span class="sources-hero-lbl">SOURCES CROSS-REFERENCED</span>
-            </div>
-            <div class="sources-bar-container">
-              <div class="sources-bar-meta">
-                <span>EVIDENCE PROPORTION BREAKDOWN</span>
-                <span id="sources-ratio-text">0 PRIMARY · 0 SECONDARY</span>
-              </div>
-              <div class="sources-multi-bar">
-                <div class="sources-bar-slice primary" id="bar-slice-primary" style="width: 0%"></div>
-                <div class="sources-bar-slice secondary" id="bar-slice-secondary" style="width: 0%"></div>
-                <div class="sources-bar-slice contra" id="bar-slice-contra" style="width: 0%"></div>
-              </div>
-            </div>
-          </div>
-
-          <div class="sources-grid-stats">
-            <div class="source-stat-card">
-              <span class="sstat-title">TOTAL SOURCES</span>
-              <span class="sstat-val ndot" id="sstat-total">0</span>
-              <span class="sstat-desc">Analyzed across public index</span>
-            </div>
-            <div class="source-stat-card">
-              <span class="sstat-title">PRIMARY SOURCES</span>
-              <span class="sstat-val ndot text-green" id="sstat-primary">0</span>
-              <span class="sstat-desc">Official / primary tier records</span>
-            </div>
-            <div class="source-stat-card">
-              <span class="sstat-title">SECONDARY SOURCES</span>
-              <span class="sstat-val ndot" id="sstat-secondary">0</span>
-              <span class="sstat-desc">Supporting report references</span>
-            </div>
-            <div class="source-stat-card">
-              <span class="sstat-title">CONTRADICTING</span>
-              <span class="sstat-val ndot text-red" id="sstat-contra">0</span>
-              <span class="sstat-desc">Dissenting source citations</span>
-            </div>
-          </div>
-
-          <div class="sources-privacy-notice">
-            <span class="notice-dot"></span>
-            <span>Source attribution masked. Number of analyzed sources displayed without geographic or publisher origin details.</span>
-          </div>
-        </div>
+      <section class="card hidden" id="s-image" aria-labelledby="im-h">
+        <h2 id="im-h">Image provenance</h2>
+        <div id="im-body"></div>
       </section>
 
-      <!-- Bento 6: System Spec & Raw Report Drawer (4 cols) -->
-      <section class="bento-card card-raw" id="card-raw">
-        <div class="card-header">
-          <div class="tape-label">06 // REPORT & TELEMETRY</div>
-          <div class="tab-toggles">
-            <button class="tab-btn active" id="tab-md-btn">MARKDOWN</button>
-            <button class="tab-btn" id="tab-json-btn">JSON</button>
-          </div>
-        </div>
-
-        <div class="raw-body">
-          <div class="raw-actions">
-            <button class="copy-raw-btn" id="copy-report-btn">COPY TO CLIPBOARD</button>
-          </div>
-          <pre class="raw-code" id="raw-display">/* Full generated report output will be shown here. */</pre>
-        </div>
+      <section class="card" id="s-export" aria-labelledby="ex-h">
+        <div class="section-head"><h2 id="ex-h">Export</h2><span class="spacer"></span>
+          <button class="btn" id="copy-link">Copy link to this report</button>
+          <a class="btn" id="dl-md" download>Markdown report</a>
+          <button class="btn" id="dl-json">JSON</button></div>
+        <details class="more" style="margin-top:10px"><summary>Raw result</summary><pre class="raw" id="raw"></pre></details>
       </section>
+    </div>
+  </main>
 
-    </main>
-
-    <!-- Bottom Status Strip -->
-    <footer class="sys-footer">
-      <div class="footer-left">
-        <span class="ndot">NOTHING OS // NT-01 TRACER</span>
-        <span class="footer-sep">·</span>
-        <span>RESEARCH BUILD v0.3.0</span>
-      </div>
-      <div class="footer-center">
-        <span>ENGINE: GROQ (LLAMA/GPT-OSS) + GEMINI 3.8</span>
-      </div>
-      <div class="footer-right">
-        <span id="backend-ping">BACKEND: CHECKING...</span>
-      </div>
-    </footer>
-  </div>
-
-  <script src="/static/app.js"></script>
+  <footer>Heuristic tool: verdicts and origin estimates can be wrong. Always open the sources.</footer>
+  <script src="/app.js"></script>
 </body>
 </html>
