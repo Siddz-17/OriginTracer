@@ -1,0 +1,14 @@
+{"id": "icloud", "claim": "Apple is shutting down iCloud", "label": "false"}
+{"id": "nasa-dark", "claim": "NASA confirmed Earth will experience 6 days of total darkness", "label": "false", "claim_date": "2014-12-16"}
+{"id": "great-wall", "claim": "The Great Wall of China is visible from space with the naked eye", "label": "false"}
+{"id": "chandrayaan", "claim": "Chandrayaan-3 landed near the Moon's south pole", "label": "true", "claim_date": "2023-08-23"}
+{"id": "gates-farmland", "claim": "Bill Gates is the largest private owner of farmland in the United States", "label": "true", "claim_date": "2021-01-14"}
+{"id": "bleach", "claim": "Drinking bleach cures COVID-19", "label": "false", "claim_date": "2020-04-23"}
+{"id": "brain-10", "claim": "Humans only use 10 percent of their brains", "label": "false"}
+{"id": "5g-covid", "claim": "5G mobile networks spread the coronavirus", "label": "false"}
+{"id": "vaccine-autism", "claim": "The MMR vaccine causes autism", "label": "false"}
+{"id": "pluto", "claim": "Pluto was reclassified as a dwarf planet in 2006", "label": "true", "claim_date": "2006-08-24"}
+{"id": "twitter-x", "claim": "Twitter was rebranded as X in 2023", "label": "true", "claim_date": "2023-07-24"}
+{"id": "india-pop", "claim": "India overtook China as the world's most populous country in 2023", "label": "true", "claim_date": "2023-04-19"}
+{"id": "paris-2024", "claim": "The 2024 Summer Olympics were held in Paris", "label": "true", "claim_date": "2024-07-26"}
+{"id": "einstein-math", "claim": "Albert Einstein failed mathematics at school", "label": "false"}

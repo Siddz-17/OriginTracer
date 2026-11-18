@@ -1,0 +1,7 @@
+# Optional local models for claim matching (embeddings) and stance (NLI). CPU only, no API key.
+# Install the CPU build of torch first to avoid the ~2 GB CUDA build:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   pip install -r requirements-models.txt
+sentence-transformers>=3
+# optional OCR for text in images (also needs the tesseract binary: https://github.com/tesseract-ocr/tesseract)
+# pytesseract

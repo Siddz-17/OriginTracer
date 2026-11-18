@@ -40,6 +40,7 @@ class RunRequest(BaseModel):
     depth: int = Field(3, ge=1, le=4)
     primary: list[str] = []
     archive: bool = True
+    image_url: str | None = Field(None, max_length=2000, pattern="^https?://")  # image the claim is about
     mode: str | None = Field(None, pattern="^(single|agents)$")  # default: TRACER_MODE (single)
 
 
@@ -48,7 +49,7 @@ async def _execute(rid: str, req: RunRequest):
         store.set_status(rid, "running")
         try:
             st = await run_pipeline(req.claim, rounds=req.rounds, depth=req.depth, primary=req.primary,
-                                    archive=req.archive, mode=req.mode,
+                                    archive=req.archive, mode=req.mode, image=req.image_url,
                                     on_event=lambda a, m: store.add_event(rid, a, m))
             store.save_result(rid, st, render_report(st))
         except Exception as ex:  # surfaced to the client via GET /runs/{id}

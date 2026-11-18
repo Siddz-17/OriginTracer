@@ -14,6 +14,7 @@ def main():
     ap.add_argument("--rounds", type=int, default=2)
     ap.add_argument("--depth", type=int, default=3)
     ap.add_argument("--primary", nargs="*", default=[])
+    ap.add_argument("--image", default=None, help="image URL or file the claim is about (image provenance)")
     ap.add_argument("--no-archive", action="store_true")
     ap.add_argument("--no-langgraph", action="store_true")
     ap.add_argument("--mode", choices=["single", "agents"], default=None,
@@ -22,7 +23,8 @@ def main():
     ap.add_argument("--out", default="report")
     a = ap.parse_args()
     st = asyncio.run(run_pipeline(a.claim, rounds=a.rounds, depth=a.depth, primary=a.primary,
-                                  archive=not a.no_archive, use_langgraph=not a.no_langgraph, mode=a.mode))
+                                  archive=not a.no_archive, use_langgraph=not a.no_langgraph, mode=a.mode,
+                                  image=a.image))
     md = render_report(st)
     open(a.out + ".md", "w", encoding="utf-8").write(md)
     json.dump(jsonable(st.result), open(a.out + ".json", "w", encoding="utf-8"), indent=2)

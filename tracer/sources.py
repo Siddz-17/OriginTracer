@@ -10,9 +10,11 @@ import os
 import re
 import time
 import xml.etree.ElementTree as ET
-from datetime import datetime
+from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
 from urllib.parse import urlparse
+
+import httpx
 
 from .classify import UTC, parse_iso
 from .config import BROWSER_UA, DEFAULT_FEEDS, UA
@@ -77,9 +79,15 @@ async def gdelt(c, q):
 
 
 async def reddit(c, q):
-    r = await c.get("https://www.reddit.com/search.json",
-                    params={"q": q, "sort": "relevance", "t": "all", "limit": 100},
-                    headers={"User-Agent": UA})
+    """Reddit search. With REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET (a free "script" app) it uses OAuth, which
+    is not blocked; the anonymous JSON endpoint usually answers 403."""
+    params = {"q": q, "sort": "relevance", "t": "all", "limit": 100}
+    tok = await _reddit_token(c)
+    if tok:
+        r = await c.get("https://oauth.reddit.com/search", params=params,
+                        headers={"User-Agent": UA, "Authorization": f"bearer {tok}"})
+    else:
+        r = await c.get("https://www.reddit.com/search.json", params=params, headers={"User-Agent": UA})
     r.raise_for_status()
     out = []
     for ch in r.json()["data"]["children"]:
@@ -205,31 +213,130 @@ async def outlets(c, q):
 
 
 async def factcheckers(c, q):
-    """Google News restricted to fact-checking organisations, plus Google's ClaimReview index if keyed."""
+    """Google News restricted to fact-checking organisations."""
     res = await asyncio.gather(*(google_news(c, f"{q} {g}") for g in site_groups((FACT_CHECK,))),
                                return_exceptions=True)
-    out = [it for r in res if not isinstance(r, Exception) for it in r]
+    return [it for r in res if not isinstance(r, Exception) for it in r]
+
+
+async def claimreview(c, q):
+    """Google Fact Check Tools API (free key: GOOGLE_FACTCHECK_API_KEY): ClaimReview ratings published by
+    fact-checkers worldwide, with the date the claim was made and who made it (direct origin evidence)."""
     key = os.getenv("GOOGLE_FACTCHECK_API_KEY")
-    if key:
-        try:
-            r = await c.get("https://factchecktools.googleapis.com/v1alpha1/claims:search",
-                            params={"query": q, "languageCode": "en", "pageSize": 20, "key": key})
-            r.raise_for_status()
-            for cl in r.json().get("claims", []):
-                for rv in cl.get("claimReview", []):
-                    ts = parse_iso(rv.get("reviewDate") or cl.get("claimDate") or "")
-                    if not rv.get("url") or not ts:
-                        continue
-                    pub = rv.get("publisher", {})
-                    out.append(dict(source="news", url=rv["url"], author=pub.get("name") or pub.get("site", ""),
-                                    ts=ts, engagement=0,
-                                    text=f"Fact check: {cl.get('text', '')}. Rating: {rv.get('textualRating', '')}. "
-                                         f"{rv.get('title', '')}"[:500],
-                                    meta={"outlet_domain": pub.get("site", ""), "rating": rv.get("textualRating"),
-                                          "claimant": cl.get("claimant")}))
-        except Exception as e:
-            logger.warning("factcheck api: %s: %s", type(e).__name__, e)
+    if not key:
+        return []
+    r = await c.get("https://factchecktools.googleapis.com/v1alpha1/claims:search",
+                    params={"query": q[:200], "languageCode": "en", "pageSize": 25, "key": key})
+    r.raise_for_status()
+    out = []
+    for cl in r.json().get("claims", []):
+        claim_ts = parse_iso(cl.get("claimDate") or "")
+        for rv in cl.get("claimReview", []):
+            ts = parse_iso(rv.get("reviewDate") or "") or claim_ts
+            if not rv.get("url") or not ts:
+                continue
+            pub = rv.get("publisher", {})
+            site = (pub.get("site") or urlparse(rv["url"]).netloc).lower().removeprefix("www.")
+            out.append(dict(source="news", url=rv["url"], author=pub.get("name") or site, ts=ts, engagement=0,
+                            text=f"Fact check: {cl.get('text', '')}. Rating: {rv.get('textualRating', '')}. "
+                                 f"{rv.get('title', '')}"[:500],
+                            meta={"outlet_domain": site, "rating": rv.get("textualRating"),
+                                  "claimant": cl.get("claimant"), "claim_date": cl.get("claimDate"),
+                                  "engine": "claimreview"}))
     return out
+
+
+# ------------------------------------------------------------------ keyed web search APIs
+_REL_DATE = re.compile(r"(\d+)\s+(minute|hour|day|week|month|year)s?\s+ago", re.I)
+
+
+def parse_loose_date(s):
+    """ISO dates, 'Jan 5, 2024', '5 Jan 2024' or '3 days ago' -> aware datetime (None if unparseable)."""
+    if not s:
+        return None
+    d = parse_iso(s)
+    if d:
+        return d
+    for fmt in ("%b %d, %Y", "%B %d, %Y", "%d %b %Y", "%d %B %Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(s.strip(), fmt).replace(tzinfo=UTC)
+        except ValueError:
+            pass
+    m = _REL_DATE.search(s)
+    if m:
+        n, unit = int(m.group(1)), m.group(2).lower()
+        days = {"minute": 1 / 1440, "hour": 1 / 24, "day": 1, "week": 7, "month": 30, "year": 365}[unit] * n
+        return datetime.now(UTC) - timedelta(days=days)
+    return None
+
+
+def _web_item(url, title, snippet, date, engine):
+    ts = parse_loose_date(date)
+    dom = urlparse(url).netloc.lower().removeprefix("www.")
+    return dict(source="websearch", url=url, author=dom, ts=ts or datetime.now(UTC), engagement=0,
+                text=f"{title}. {snippet or ''}".strip()[:500],
+                meta={"engine": engine, "outlet_domain": dom, "undated": ts is None})
+
+
+async def _brave(c, q, key):
+    r = await c.get("https://api.search.brave.com/res/v1/web/search",
+                    params={"q": q, "count": 20}, headers={"X-Subscription-Token": key, "Accept": "application/json"})
+    r.raise_for_status()
+    return [_web_item(x["url"], x.get("title", ""), re.sub(r"<[^>]+>", "", x.get("description", "")),
+                      x.get("page_age") or x.get("age"), "brave")
+            for x in (r.json().get("web") or {}).get("results", []) if x.get("url")]
+
+
+async def _tavily(c, q, key):
+    r = await c.post("https://api.tavily.com/search", headers={"Authorization": f"Bearer {key}"},
+                     json={"query": q, "max_results": 20, "search_depth": "basic"})
+    r.raise_for_status()
+    return [_web_item(x["url"], x.get("title", ""), x.get("content", ""), x.get("published_date"), "tavily")
+            for x in r.json().get("results", []) if x.get("url")]
+
+
+async def _serper(c, q, key):
+    out = []
+    for kind in ("search", "news"):
+        r = await c.post(f"https://google.serper.dev/{kind}", headers={"X-API-KEY": key},
+                         json={"q": q, "num": 20})
+        r.raise_for_status()
+        for x in r.json().get("organic" if kind == "search" else "news", []):
+            if x.get("link"):
+                out.append(_web_item(x["link"], x.get("title", ""), x.get("snippet", ""), x.get("date"),
+                                     f"serper_{kind}"))
+    return out
+
+
+WEBSEARCH_KEYS = (("BRAVE_API_KEY", _brave), ("TAVILY_API_KEY", _tavily), ("SERPER_API_KEY", _serper))
+
+
+async def websearch(c, q):
+    """First configured search API (Brave, Tavily or Serper, all with free tiers): dated, reliable web results,
+    unlike scraped DuckDuckGo, which throttles and carries no dates."""
+    for env, fn in WEBSEARCH_KEYS:
+        key = os.getenv(env)
+        if key:
+            return await fn(c, q, key)
+    return []
+
+
+# ------------------------------------------------------------------ Reddit (OAuth app-only)
+_reddit_tok = {"v": None, "exp": 0.0}
+
+
+async def _reddit_token(c):
+    cid, sec = os.getenv("REDDIT_CLIENT_ID"), os.getenv("REDDIT_CLIENT_SECRET")
+    if not (cid and sec):
+        return None
+    if _reddit_tok["v"] and time.time() < _reddit_tok["exp"] - 60:
+        return _reddit_tok["v"]
+    r = await c.post("https://www.reddit.com/api/v1/access_token", auth=(cid, sec),
+                     data={"grant_type": "client_credentials"}, headers={"User-Agent": UA})
+    r.raise_for_status()
+    js = r.json()
+    _reddit_tok.update(v=js.get("access_token"), exp=time.time() + float(js.get("expires_in", 3600)))
+    return _reddit_tok["v"]
 
 
 async def news(c, q):
@@ -352,7 +459,38 @@ async def wayback_first(c, url):
     return None
 
 
-ENABLE_REDDIT = os.getenv("TRACER_ENABLE_REDDIT", "0").lower() in ("1", "true")
+_ATODAY_FIRST = re.compile(r'rel="first memento"; datetime="([^"]+)"')
+ARCHIVE_TODAY = os.getenv("TRACER_ARCHIVE_TODAY", "1") == "1"
+
+
+async def archive_today_first(c, url):
+    """First archive.today (archive.ph) snapshot of a URL from its Memento TimeMap, or None. Captures pages the
+    Wayback Machine misses (paywalled news, deleted social posts people archived as proof)."""
+    if not ARCHIVE_TODAY:
+        return None
+    # plain HTTP: archive.today's TLS endpoints time out for non-browser clients; the TimeMap is public metadata
+    r = await c.get(f"http://archive.ph/timemap/{url}", headers={"User-Agent": BROWSER_UA},
+                    timeout=httpx.Timeout(15.0, connect=8.0))
+    if r.status_code != 200:
+        return None
+    m = _ATODAY_FIRST.search(r.text)
+    if not m:
+        return None
+    try:
+        return parsedate_to_datetime(m.group(1)).astimezone(UTC)
+    except (TypeError, ValueError):
+        return None
+
+
+async def first_capture(c, url):
+    """Earliest archive capture across the Wayback Machine and archive.today -> (datetime, archive) or None."""
+    res = await asyncio.gather(wayback_first(c, url), archive_today_first(c, url), return_exceptions=True)
+    hits = [(d, name) for d, name in zip(res, ("wayback", "archive.today")) if isinstance(d, datetime)]
+    return min(hits) if hits else None
+
+
+ENABLE_REDDIT = (os.getenv("TRACER_ENABLE_REDDIT", "0").lower() in ("1", "true")
+                 or bool(os.getenv("REDDIT_CLIENT_ID") and os.getenv("REDDIT_CLIENT_SECRET")))
 
 # Discovery runs every source concurrently; reputable outlets and fact-checkers get their own
 # site-restricted searches and are prioritised by matching and evidence ranking.
@@ -360,6 +498,10 @@ SOURCES = {"outlets": outlets, "factcheck": factcheckers, "news": news, "gdelt":
            "duckduckgo": duckduckgo, "bluesky": bluesky}
 if ENABLE_REDDIT:
     SOURCES["reddit"] = reddit
+if os.getenv("GOOGLE_FACTCHECK_API_KEY"):
+    SOURCES["claimreview"] = claimreview
+if any(os.getenv(k) for k, _ in WEBSEARCH_KEYS):
+    SOURCES["websearch"] = websearch
 
 CONTRA = {"news": ["fact check", "debunked false"],
           "gdelt": ['(debunked OR "fact check" OR retracted OR denied OR correction)'],

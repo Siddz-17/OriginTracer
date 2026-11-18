@@ -30,7 +30,9 @@ class Ev:
 class State:
     """Everything one run knows. Agents read and mutate it; the pipeline passes it along."""
 
-    def __init__(self, claim, primary_urls=(), on_event=None):
+    def __init__(self, claim, primary_urls=(), on_event=None, image=None):
+        self.image_src = image  # optional image URL / path for image provenance
+        self.image: dict | None = None
         self.claim = claim
         self.pool: dict[str, Ev] = {}
         self.n = 0
@@ -57,6 +59,7 @@ class State:
         self.fact: dict = {}
         self.critiques: list[dict] = []
         self.judge: dict = {}
+        self.origin_rejected: list[str] = []  # origin candidates the analysis model says do not state the claim
         self.evidence_pack: list[dict] = []  # ranked evidence sent to the consolidated analysis
         self.result: dict = {}
         self.events: list[dict] = []
