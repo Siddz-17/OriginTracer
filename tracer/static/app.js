@@ -26,13 +26,21 @@ const STEP_OF = { pipeline: "search", expansion: "search", discovery: "search", 
   evidence: "evidence", image: "search", analysis: "analysis", factcheck: "analysis", devil: "analysis", judge: "analysis" };
 const STEPS = ["search", "match", "origin", "evidence", "analysis"];
 
-const state = { runId: null, timer: null, clock: null, started: 0, lastEvent: 0, result: null, filter: "all" };
+const state = { runId: null, timer: null, clock: null, started: 0, lastEvent: 0, result: null, filter: "all", fails: 0 };
 
 /* ---------------------------------------------------------------- server status */
-async function checkHealth() {
+let healthTimer = null;
+async function checkHealth(attempt = 0) {
+  // Free hosting sleeps and restarts on deploys: one failed check is not "down". Keep retrying, gently.
   const el = $("#health");
+  clearTimeout(healthTimer);
   try {
-    const h = await (await fetch("/health")).json();
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 60000);  // a cold start can take ~30-60 s
+    const res = await fetch("/health", { signal: ctrl.signal, cache: "no-store" });
+    clearTimeout(t);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const h = await res.json();
     const hasKey = h.llm_key_configured;
     if (hasKey === false) {
       el.className = "status-dot err";
@@ -44,7 +52,10 @@ async function checkHealth() {
       el.title = "Server is up";
     }
   } catch {
-    el.className = "status-dot err"; el.textContent = "Server unreachable";
+    el.className = "status-dot warn";
+    el.textContent = attempt < 3 ? "Connecting…" : "Server not responding · retrying";
+    el.title = "The server may be waking up or redeploying (free hosting). Retrying automatically.";
+    healthTimer = setTimeout(() => checkHealth(attempt + 1), Math.min(30000, 5000 * (attempt + 1)));
   }
 }
 
@@ -91,7 +102,17 @@ async function poll() {
   clearTimeout(state.timer);
   const id = state.runId;
   try {
-    const evs = await (await fetch(`/runs/${id}/events?after=${state.lastEvent}`)).json();
+    const runRes = await fetch(`/runs/${id}`, { cache: "no-store" });
+    if (runRes.status === 404) {
+      // the server restarted (deploy, crash or free-tier sleep) and its database was reset: the run is gone
+      stopClock(); setBusy(false);
+      $("#progress-title").textContent = "Run lost";
+      return showError("This run was lost because the server restarted",
+        "Free hosting restarts on every deploy and after inactivity, which resets its database. Click Trace claim to run it again.");
+    }
+    if (!runRes.ok) throw new Error(`HTTP ${runRes.status}`);
+    const run = await runRes.json();
+    const evs = await (await fetch(`/runs/${id}/events?after=${state.lastEvent}`, { cache: "no-store" })).json();
     for (const e of evs) {
       state.lastEvent = Math.max(state.lastEvent, e.id);
       logLine(e.agent, e.message);
@@ -99,7 +120,8 @@ async function poll() {
       const m = /"news_articles": (\d+)/.exec(e.message);
       if (m) $("#progress-count").textContent = `${m[1]} articles found so far`;
     }
-    const run = await (await fetch(`/runs/${id}`)).json();
+    state.fails = 0;
+    $("#progress-note").textContent = "Usually takes 2–5 minutes.";
     if (id !== state.runId) return;
     if (run.status === "done") return finish(run);
     if (run.status === "failed") {
@@ -108,9 +130,12 @@ async function poll() {
       return showError("The run failed", run.error || "Unknown error. See the activity log.");
     }
   } catch (e) {
+    state.fails += 1;
     logLine("ui", `connection problem: ${e.message}; retrying`);
+    if (state.fails >= 4) $("#progress-note").textContent =
+      "Can't reach the server right now (it may be restarting). Still retrying; if it restarted, this run is lost.";
   }
-  state.timer = setTimeout(poll, 2500);
+  state.timer = setTimeout(poll, state.fails ? Math.min(15000, 2500 * (state.fails + 1)) : 2500);
 }
 
 function finish(run) {

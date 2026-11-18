@@ -617,12 +617,24 @@ def test_groq_413_retry():
             os.environ["GROQ_API_KEY"] = old_key
 
 
+def test_interrupted_runs():
+    """Runs left running by a previous server process are marked failed at startup, not left spinning."""
+    from tracer.store import Store
+    s = Store("sqlite:///:memory:")
+    a, b = s.create_run("stuck", {}), s.create_run("finished", {})
+    s.set_status(a, "running")
+    s.set_status(b, "done")
+    assert s.fail_interrupted() == 1
+    assert s.get_run(a)["status"] == "failed" and "restarted" in s.get_run(a)["error"]
+    assert s.get_run(b)["status"] == "done"
+
+
 if __name__ == "__main__":
     setup()
     for t in (test_mutation_labels, test_scrape_links, test_local_matching, test_json_extraction, test_pipeline,
               test_single_call_pipeline, test_langgraph_wiring, test_llm_routing, test_stance_and_matching_accuracy,
               test_verdict_checks, test_local_models,
               test_image_provenance, test_recent_sources,
-              test_groq_413_retry):
+              test_groq_413_retry, test_interrupted_runs):
         t()
         print("PASS", t.__name__)
