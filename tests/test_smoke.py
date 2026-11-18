@@ -7,6 +7,7 @@ import types
 from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+os.environ.setdefault("TRACER_LOCAL_MODELS", "0")  # deterministic heuristics; test_local_models opts in
 try:
     import httpx  # noqa
 except ImportError:  # stub just enough for tracer.pipeline to import
@@ -185,6 +186,7 @@ def setup():
     sources.SOURCES.update(reddit=f_reddit, bluesky=f_bluesky, gdelt=f_gdelt, news=f_news,
                            outlets=f_outlets, factcheck=f_factcheck, duckduckgo=f_empty)
     sources.gdelt, sources.wikipedia, sources.wayback_first = f_gdelt, f_wiki, f_wayback
+    sources.ARCHIVE_TODAY = False  # offline: no archive.today lookups
     scrape.resolve_redirect = fake_resolve
     httpx.AsyncClient = FakeClient
 
@@ -429,9 +431,147 @@ def test_llm_routing():
                 os.environ[k] = v
 
 
+def test_stance_and_matching_accuracy():
+    """Regression cases for the local matcher: claim-aware stance, fact-check ratings, stemmed synonyms."""
+    from tracer import local
+    moon = local.claim_profile("Chandrayaan-3 landed near the Moon's south pole")
+    icloud = local.claim_profile("Apple is shutting down iCloud")
+    nasa = local.claim_profile("NASA confirmed Earth will experience 6 days of total darkness")
+    gates = local.claim_profile("Bill Gates is the largest private owner of farmland in the United States")
+    bleach = local.claim_profile("Drinking bleach cures COVID-19")
+    cases = [
+        (moon, "ISRO says Chandrayaan-3 lander did not wake up after lunar night", "report"),  # unrelated negation
+        (moon, "No, Chandrayaan-3 did not land on the Moon", "debunk"),
+        (icloud, "Apple denies report it will discontinue iCloud", "debunk"),
+        (nasa, "Did NASA say Earth will go dark for six days? No", "debunk"),
+        (gates, "Fact check: Bill Gates is the largest private farmland owner in US - True", "support"),
+        (gates, "Fact check: Is Bill Gates the largest farmland owner? Rating: Mostly True", "support"),
+        (bleach, "Fact Check: Drinking bleach does not cure COVID-19", "debunk"),
+        (bleach, "Bleach poisoning calls rise during pandemic", "report"),
+    ]
+    for prof, text, want in cases:
+        assert local.stance(text, prof) == want, (text, local.stance(text, prof), want)
+    assert local.fact_check_rating("x", {"rating": "Mostly False"}) == "misleading"
+    assert local.fact_check_rating("x", {"rating": "Pants on Fire!"}) == "false"
+    assert local.relevance(icloud, "Apple discontinues iCloud") > 0.8  # stemmed synonym ("discontinues")
+    assert local.relevance(icloud, "Pineapple farms shutting down in Hawaii cloud") < 0.3  # no substring names
+    assert local.relevance(nasa, "NASA says Earth will go dark for six days") > 0.7  # number words
+    assert local.is_preview("Chandrayaan-3 landed near the Moon's south pole", "India plans to land Chandrayaan-3")
+    assert not local.is_preview("Bill Gates is the largest private owner of farmland in the United States",
+                                "Gates could become the largest owner")
+    assert local.predicate_coverage(moon, "Chandrayaan-3 mission: ISRO shares new images") < 0.5
+
+
+def test_verdict_checks():
+    """Deterministic verdict reconciliation, fact-check consensus and evidence re-orientation."""
+    from types import SimpleNamespace
+
+    from tracer import analysis, scoring
+    subs = [{"verdict": "refuted"}, {"verdict": "refuted"}]
+    v, notes = scoring.reconcile_verdict("true", subs, {"majority": None})
+    assert v == "false" and notes, (v, notes)  # contradiction with its own sub-claims is fixed
+    v, notes = scoring.reconcile_verdict("false", [{"verdict": "refuted"}], {"majority": "true", "publishers": {}})
+    assert v == "false" and notes  # disagreement with fact-checkers is flagged, not overridden
+    assert scoring.implied_verdict([{"verdict": "supported"}, {"verdict": "refuted"}]) == "misleading"
+    assert scoring.confidence_cap(0, 2) == 0.8 and scoring.confidence_cap(1, 0) == 1.0
+    # a 'refuted' sub-claim whose debunks the model filed under "dissenting" is re-oriented
+    st = SimpleNamespace(assign={"E1": {"stance": "debunk", "relevance": 0.9},
+                                 "E2": {"stance": "report", "relevance": 0.9},
+                                 "E3": {"stance": "debunk", "relevance": 0.55}}, emit=lambda *a: None)
+    sc = {"id": "S1", "verdict": "refuted", "supporting": [], "dissenting": ["E1", "E2"]}
+    analysis._orient_evidence(st, [sc])
+    assert sc["supporting"] == ["E1"] and sc["dissenting"] == ["E2"], sc
+    # a loosely related debunk (a different rumour about the same event) keeps the model's placement
+    sc = {"id": "S1", "verdict": "supported", "supporting": ["E2", "E3"], "dissenting": []}
+    analysis._orient_evidence(st, [sc])
+    assert sc["supporting"] == ["E2", "E3"] and sc["dissenting"] == [], sc
+
+
+def test_local_models():
+    """Embedding veto / rescue and NLI debunks (skipped when sentence-transformers is not installed)."""
+    from tracer import nlp
+    old = os.environ.get("TRACER_LOCAL_MODELS")
+    os.environ["TRACER_LOCAL_MODELS"] = "auto"
+    try:
+        if not nlp.enabled():
+            print("SKIP test_local_models (sentence-transformers not installed)")
+            return
+        claim = "Bill Gates is the largest private owner of farmland in the United States"
+        sims = nlp.similarities(claim, ["Bill Gates is the biggest private owner of farmland in the US",
+                                        "Fact check: Bill Gates did not promote water reserve cryptocoin"])
+        assert sims[0] >= nlp.RESCUE_SIM and sims[1] < nlp.MATCH_MIN_SIM, sims
+        con = nlp.contradiction("Drinking bleach cures COVID-19",
+                                ["Fact Check: Drinking bleach does not cure COVID-19"])
+        assert con[0] >= nlp.NLI_CONTRA, con
+    finally:
+        if old is None:
+            os.environ.pop("TRACER_LOCAL_MODELS", None)
+        else:
+            os.environ["TRACER_LOCAL_MODELS"] = old
+
+
+def test_image_provenance():
+    """Fingerprint, EXIF flags, reverse-search dating and pHash relation, all offline."""
+    from tracer import image
+    if not image._libs():
+        print("SKIP test_image_provenance (pillow / imagehash not installed)")
+        return
+    import io as _io
+    import tempfile
+    from PIL import Image
+    img = Image.new("RGB", (64, 64), (200, 30, 30))
+    for x in range(32):
+        img.putpixel((x, x), (0, 0, 0))
+    exif = img.getexif()
+    exif[0x0131] = "Adobe Photoshop 25.0"  # Software
+    exif[0x0132] = "2019:05:01 10:00:00"    # DateTime
+    buf = _io.BytesIO()
+    img.save(buf, "JPEG", exif=exif)
+    path = os.path.join(tempfile.mkdtemp(), "x.jpg")
+    open(path, "wb").write(buf.getvalue())
+
+    info, pil, ph = image.fingerprint(buf.getvalue())
+    assert info["format"] == "JPEG" and info["phash"] and len(info["sha256"]) == 64, info
+    assert any("editing software" in f for f in info["flags"]), info["flags"]
+    assert image.relation(3) == "same" and image.relation(15) == "variant" and image.relation(40) == "different"
+    assert "tineye.com/search?url=" in image.manual_links("https://ex.com/a.jpg")["tineye"]
+
+    async def fake_lens(c, url, key):
+        return [{"url": "https://old.example/2015", "title": "old", "site": "old.example", "thumbnail": "t1",
+                 "first_seen": None, "engine": "google_lens"},
+                {"url": "https://new.example/2024", "title": "new", "site": "new.example", "thumbnail": "t2",
+                 "first_seen": None, "engine": "google_lens"}]
+
+    async def fake_dist(c, thumb, ph_):
+        return 2 if thumb == "t1" else 30
+
+    async def fake_capture(c, url):
+        d = datetime(2015, 3, 1, tzinfo=UTC) if "old" in url else datetime(2024, 1, 1, tzinfo=UTC)
+        return d, "wayback"
+
+    orig = (image._lens, image._thumb_distance, sources.first_capture, os.environ.get("SERPAPI_API_KEY"))
+    image._lens, image._thumb_distance, sources.first_capture = fake_lens, fake_dist, fake_capture
+    os.environ["SERPAPI_API_KEY"] = "test"
+    try:
+        engine, ms = asyncio.run(image.reverse_search(None, "https://ex.com/a.jpg", ph))
+        assert engine == "google_lens" and ms[0]["site"] == "old.example", ms
+        assert ms[0]["relation"] == "same" and ms[1]["relation"] == "different", ms
+        assert ms[0]["first_seen"].startswith("2015-03-01"), ms[0]
+        rep = asyncio.run(image.analyze_image(None, path))  # local file: no reverse search, manual links instead
+        assert rep["phash"] == info["phash"] and rep["manual_search"]["note"], rep
+    finally:
+        image._lens, image._thumb_distance, sources.first_capture = orig[:3]
+        if orig[3] is None:
+            os.environ.pop("SERPAPI_API_KEY", None)
+        else:
+            os.environ["SERPAPI_API_KEY"] = orig[3]
+
+
 if __name__ == "__main__":
     setup()
     for t in (test_mutation_labels, test_scrape_links, test_local_matching, test_json_extraction, test_pipeline,
-              test_single_call_pipeline, test_langgraph_wiring, test_llm_routing):
+              test_single_call_pipeline, test_langgraph_wiring, test_llm_routing, test_stance_and_matching_accuracy,
+              test_verdict_checks, test_local_models,
+              test_image_provenance):
         t()
         print("PASS", t.__name__)

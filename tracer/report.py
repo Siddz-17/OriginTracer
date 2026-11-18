@@ -54,6 +54,24 @@ def render_report(st):
         L += ["\n**Judge caveats:**"] + [f"- {m}" for m in J["caveats"]]
     if J.get("origin_statement"):
         L.append(f"\n_Origin (judge):_ {J['origin_statement']}")
+    img = getattr(st, "image", None)
+    if img:
+        L += ["\n## Image provenance\n"]
+        if img.get("error"):
+            L.append(f"{img['error']}\n")
+        else:
+            L.append(f"`{img.get('format')}` {img.get('width')}x{img.get('height')} | pHash `{img.get('phash')}` | "
+                     f"SHA-256 `{img.get('sha256', '')[:16]}…` | reverse search: {img.get('reverse_engine') or 'not configured'}\n")
+            L += [f"* {n}" for n in img.get("notes", [])]
+            if img.get("ocr_text"):
+                L.append(f"* Text in image: \"{img['ocr_text'][:300]}\"")
+            ms = img.get("matches", [])[:10]
+            if ms:
+                L += ["\n| first seen | site | relation | page |", "|---|---|---|---|"]
+                L += [f"| {(m.get('first_seen') or '?')[:10]} | {m.get('site')} | {m.get('relation') or '?'} | {m.get('url')} |"
+                      for m in ms]
+            L.append("\nManual reverse search: " + " · ".join(f"[{k}]({v})" for k, v in img.get("manual_search", {}).items()
+                                                            if v.startswith("http")))
     L += ["\n## Likely origin\n"]
     if oa:
         c0 = oa["candidates"][0]

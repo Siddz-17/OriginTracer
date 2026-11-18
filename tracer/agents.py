@@ -9,6 +9,7 @@ import json
 import os
 import re
 from collections import Counter, defaultdict
+from datetime import timedelta
 from urllib.parse import urlparse
 
 from . import config, llm, local, scrape, sources
@@ -18,6 +19,7 @@ from .mutation import MUTATION_LABELS, refine_mutations
 from .provenance import origin_analysis
 from .scoring import compute_confidence, source_weight
 
+WAYBACK_MAX_LEAD = timedelta(days=int(os.getenv("WAYBACK_MAX_LEAD_DAYS", "45")))
 DEBUNK_RE = re.compile(r"debunk|fact.?check|false|hoax|retract|correction|denied|misleading|no evidence", re.I)
 
 
@@ -86,7 +88,7 @@ async def source_discovery(c, st):
             st.add(raw)
     cnt = Counter(e.source for e in st.pool.values())
     st.discovery = {"reddit_posts": cnt["reddit"], "bluesky_posts": cnt["bluesky"],
-                    "news_articles": cnt["news"] + cnt["gdelt"], "web_results": cnt["duckduckgo"],
+                    "news_articles": cnt["news"] + cnt["gdelt"], "web_results": cnt["duckduckgo"] + cnt["websearch"],
                     "reputable_outlet_items": sum(1 for e in st.pool.values() if local.outlet_score(e) > 0)}
     if cnt["reddit"] == 0 and cnt["bluesky"] == 0 and (cnt["news"] + cnt["gdelt"]) > 0:
         st.emit("discovery", "social sources unavailable/empty; prioritizing global news coverage as main priority")
@@ -178,13 +180,23 @@ async def archive_pass(c, st, limit=25):
         async with sem:
             st.archive_tried.add(e.url)
             try:
-                e.first_capture = await sources.wayback_first(c, e.url)
+                hit = await sources.first_capture(c, e.url)
             except Exception:
-                pass
+                return
+            if not hit:
+                return
+            fc, archive = hit
+            # A capture long before the stated publication date means the URL was reused (topic / hub /
+            # live page), not that this article existed earlier: keep the stated date.
+            if fc < e.ts - WAYBACK_MAX_LEAD:
+                e.meta["wayback_ignored"] = fc.isoformat()
+                return
+            e.first_capture = fc
+            e.meta["first_capture_archive"] = archive
 
     await asyncio.gather(*(one(e) for e in targets))
     moved = sum(1 for e in targets if e.first_capture and e.first_capture < e.ts)
-    st.emit("origin", f"Wayback: checked {len(targets)} URLs, {moved} pushed earlier")
+    st.emit("origin", f"Wayback + archive.today: checked {len(targets)} URLs, {moved} pushed earlier")
 
 
 async def origin_tracer(c, st, archive=True, quiet=False):
@@ -266,7 +278,7 @@ async def _trace_citations(c, st, max_depth=3, budget=25):
     matched = sorted((ev[i] for i in st.assign if i in ev), key=lambda e: e.eff_ts)
     seeds, n_news = [], 0
     # Fetch full articles from fact-checkers / wire services / major outlets first, then the most relevant rest.
-    news_candidates = sorted((e for e in matched if e.source in ("news", "gdelt", "duckduckgo")),
+    news_candidates = sorted((e for e in matched if e.source in ("news", "gdelt", "duckduckgo", "websearch")),
                              key=lambda e: -(local.outlet_score(e) + st.assign[e.id].get("relevance", 0)
                                              + (0.3 if st.assign[e.id].get("stance") == "debunk" else 0)))[:16]
     sem = asyncio.Semaphore(4)  # Google News decoding hits Google; keep it gentle
@@ -556,8 +568,7 @@ def build_result(st):
     conf = sc.get("after_critique", sc.get("confidence", 0.0))
     if J.get("changed_from_factchecker"):
         conf = max(0.0, round(conf - 0.05, 2))
-    if not sc.get("primary_sources"):
-        conf = min(conf, 0.6)
+    conf = min(conf, sc.get("cap", 1.0 if sc.get("primary_sources") else 0.6))
     cands = oa.get("candidates", [])
     st.result = jsonable({
         "claim": st.claim,
@@ -569,6 +580,7 @@ def build_result(st):
                    "p_unobserved": oa.get("p_unobserved"), "evidence": oa.get("bullets", []),
                    "first_platform": cands[0]["source"] if cands else None, "candidates": cands,
                    "propagation": {k: oa.get(k) for k in ("n_nodes", "n_edges", "edge_kinds")},
+                   "claim_review": oa.get("claim_review"),
                    "statement": J.get("origin_statement")},
         "timeline": st.timeline,
         "mutation_graph": mutation_graph(st),
@@ -584,6 +596,7 @@ def build_result(st):
         "evidence_ranked": [{k: x.get(k) for k in ("id", "kind", "weight", "outlet", "tier", "date", "title", "url",
                                                      "stance")} for x in st.evidence_pack],
         "primary_hint": st.fact.get("primary_hint", ""),
+        "image": st.image,
     })
     return st.result
 

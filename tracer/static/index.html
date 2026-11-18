@@ -70,6 +70,13 @@
               <button class="clear-btn" id="clear-input-btn" title="Clear input">×</button>
             </div>
           </div>
+          <div class="field-group">
+            <label for="image-input" class="ndot-label">IMAGE URL (OPTIONAL: TRACE WHERE A PHOTO FIRST APPEARED)</label>
+            <div class="input-wrapper">
+              <input type="url" id="image-input" class="nothing-input" autocomplete="off" spellcheck="false"
+                     placeholder="https://... public link to the image the claim is about" />
+            </div>
+          </div>
 
           <!-- Quick Samples Pill Row -->
           <div class="samples-row">
@@ -182,6 +189,7 @@
           <div class="verdict-banner">
             <h1 class="verdict-title ndot" id="verdict-text">--</h1>
             <p class="verdict-rationale" id="verdict-rationale">Submit a claim to compute confidence and cross-verify with global news and primary archives.</p>
+            <div id="extra-panel"></div>
           </div>
 
           <div class="verdict-stats-row">

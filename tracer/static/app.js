@@ -108,6 +108,8 @@ const state = {
 // DOM Elements
 const dom = {
   claimInput: document.getElementById("claim-input"),
+  imageInput: document.getElementById("image-input"),
+  extraPanel: document.getElementById("extra-panel"),
   clearBtn: document.getElementById("clear-input-btn"),
   startBtn: document.getElementById("start-trace-btn"),
   roundsOpts: document.querySelectorAll("#rounds-selector .pill-opt"),
@@ -315,11 +317,44 @@ function renderReportData(data) {
   const subclaims = res.subclaims || (res.fact_check && res.fact_check.subclaims) || [];
   renderSubclaims(subclaims);
 
+  // 5b. Origin notes, verdict checks and image provenance
+  renderExtra(res);
+
   // 6. Sources Metrics (Number of sources only, no origins/domains displayed)
   renderSourcesMetrics();
 
   // 7. Raw Code
   renderRawCode();
+}
+
+function renderExtra(res) {
+  if (!dom.extraPanel) return;
+  const blocks = [];
+  const origin = res.origin || {};
+  const ev = origin.evidence || [];
+  if (ev.length) {
+    blocks.push(`<div class="subclaim-card"><div class="subclaim-top"><span class="subclaim-id">ORIGIN</span>
+      <span class="subclaim-status-pill unverifiable">P(unobserved) ${Math.round((origin.p_unobserved || 0) * 100)}%</span></div>
+      ${ev.map(b => `<div class="subclaim-reasoning">• ${escapeHtml(b)}</div>`).join("")}</div>`);
+  }
+  const caveats = res.caveats || [];
+  if (caveats.length) {
+    blocks.push(`<div class="subclaim-card"><div class="subclaim-top"><span class="subclaim-id">CAVEATS / CHECKS</span></div>
+      ${caveats.map(c => `<div class="subclaim-reasoning">• ${escapeHtml(c)}</div>`).join("")}</div>`);
+  }
+  const img = res.image;
+  if (img) {
+    const rows = img.error ? [escapeHtml(img.error)] : (img.notes || []).map(escapeHtml);
+    const links = Object.entries(img.manual_search || {}).filter(([, v]) => String(v).startsWith("http"))
+      .map(([k, v]) => `<a href="${escapeHtml(v)}" target="_blank" rel="noopener">${escapeHtml(k)}</a>`).join(" · ");
+    const matches = (img.matches || []).slice(0, 6).map(m =>
+      `<div class="subclaim-reasoning">${escapeHtml((m.first_seen || "?").slice(0, 10))} · ${escapeHtml(m.site || "")} · ${escapeHtml(m.relation || "?")}</div>`).join("");
+    blocks.push(`<div class="subclaim-card"><div class="subclaim-top"><span class="subclaim-id">IMAGE PROVENANCE</span>
+      <span class="subclaim-status-pill unverifiable">pHash ${escapeHtml(img.phash || "-")}</span></div>
+      ${rows.map(r => `<div class="subclaim-reasoning">• ${r}</div>`).join("")}${matches}
+      ${links ? `<div class="subclaim-reasoning">Manual reverse search: ${links}</div>` : ""}</div>`);
+  }
+  dom.extraPanel.innerHTML = blocks.join("");
 }
 
 function renderSubclaims(subs) {
@@ -420,7 +455,8 @@ async function triggerTrace() {
         claim: claim,
         rounds: state.rounds,
         depth: state.depth,
-        archive: true
+        archive: true,
+        image_url: (dom.imageInput && dom.imageInput.value.trim()) || null
       })
     });
 

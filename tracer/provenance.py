@@ -3,7 +3,8 @@ import math
 from collections import Counter, defaultdict, deque
 from datetime import datetime, timedelta
 
-from .classify import UTC, norm_url
+from . import local
+from .classify import UTC, norm_url, parse_iso
 
 # ---------------------------------------------- propagation graph & origin scoring
 ORIGIN_W = {"timestamp": 0.35, "citation": 0.30, "repost": 0.15, "direct": 0.20}
@@ -50,6 +51,20 @@ def build_graph(st):
     return M, edges, anomalies
 
 
+def claim_review_origin(st, M):
+    """Earliest claim date (and most common claimant) from matched ClaimReview fact-check records."""
+    recs = []
+    for e in M.values():
+        d = parse_iso(e.meta.get("claim_date") or "")
+        if d:
+            recs.append((d, e.meta.get("claimant")))
+    if not recs:
+        return None
+    claimants = Counter(c for _, c in recs if c)
+    return {"date": min(d for d, _ in recs), "claimant": claimants.most_common(1)[0][0] if claimants else None,
+            "n": len(recs)}
+
+
 def origin_analysis(st, now=None):
     """OriginScore = timestamp + citation + repost + direct-reference (originality); softmaxed to
     probabilities with explicit mass on 'origin not observed'. Heuristic, not calibrated."""
@@ -78,11 +93,19 @@ def origin_analysis(st, now=None):
     span = (t1 - t0).total_seconds()
     vroot = {v["id"] for v in st.variants if not v.get("parent")}
     # undated web results carry the fetch time, not a publication time: never let them be the origin
-    pool = {i: e for i, e in M.items() if st.assign[i].get("stance") not in ("debunk", "joke")
-            and not e.meta.get("undated")}
-    # Prefer strongly matching items as origin candidates: a loosely matching old article that merely shares
-    # keywords would otherwise win on the timestamp term alone.
-    strong = {i: e for i, e in pool.items() if st.assign[i].get("relevance", 1.0) >= 0.75}
+    # Fact-check / debunk coverage is a reaction to the claim, never its source; satire is excluded too.
+    pool = {i: e for i, e in M.items() if st.assign[i].get("stance") not in ("debunk", "joke", "support")
+            and st.assign[i].get("outlet_tier") != "fact_check" and not e.meta.get("undated")}
+    # Prefer items that actually state the claim: strong keyword match, the claim's predicate present (not just
+    # its names), not a forward-looking preview of a past event, and not rejected by the analysis model.
+    # A loosely matching old article that merely shares keywords would otherwise win on the timestamp alone.
+    prof = local.claim_profile(st.claim)
+    rejected = set(getattr(st, "origin_rejected", ()) or ())
+    pool = {i: e for i, e in pool.items() if i not in rejected} or pool
+    strong = {i: e for i, e in pool.items() if st.assign[i].get("relevance", 1.0) >= 0.75
+              and local.predicate_coverage(prof, e.text) >= 0.5 and not local.is_preview(st.claim, e.text)}
+    if not strong:
+        strong = {i: e for i, e in pool.items() if st.assign[i].get("relevance", 1.0) >= 0.75}
     pool = strong or pool
     only_debunks = not pool  # every observed item is a debunk/fact-check: the claim's own source was not seen
     pool = pool or {i: e for i, e in M.items() if not e.meta.get("undated")} or M
@@ -105,6 +128,13 @@ def origin_analysis(st, now=None):
         p_unobs += 0.2
     if only_debunks:
         p_unobs = max(p_unobs, 0.5)
+    if len(rejected) >= 3:  # the analysis model rejected most early candidates: the real source was not found
+        p_unobs += 0.2
+    # Fact-checkers' ClaimReview records say when (and by whom) the claim was made: if that is earlier than
+    # anything observed, the origin itself was not found.
+    reviewed = claim_review_origin(st, M)
+    if reviewed and reviewed["date"] < top.eff_ts - timedelta(days=2):
+        p_unobs += 0.15
     p_unobs = min(0.8, p_unobs)
     out = []
     for (s, i, parts), zi in list(zip(cand, z))[:5]:
@@ -118,6 +148,21 @@ def origin_analysis(st, now=None):
     ti = M[t["id"]]
     bullets = [f"First observed on {t['source']} at {t['ts']:%Y-%m-%d %H:%M UTC}"
                + (f" (Wayback capture pushed this back from {t['orig_ts']:%Y-%m-%d})" if t["ts"] < t["orig_ts"] else "")]
+    if len(rejected) >= 3:
+        bullets.append(f"The analysis rejected {len(rejected)} earlier candidates as not stating the claim; "
+                       "the true origin is probably older than anything observed")
+    img = getattr(st, "image", None) or {}
+    if img.get("earliest"):
+        e0 = img["earliest"]
+        bullets.append(f"The image was online by {e0['first_seen'][:10]} ({e0['site']}, {e0.get('relation') or 'unverified'} "
+                       "match)" + (" - earlier than any text coverage found" if e0["first_seen"][:10] < f"{t['ts']:%Y-%m-%d}"
+                                   else ""))
+    if reviewed:
+        bullets.append(f"Fact-checkers date the claim to {reviewed['date']:%Y-%m-%d}"
+                       + (f" and attribute it to {reviewed['claimant']}" if reviewed.get("claimant") else "")
+                       + f" ({reviewed['n']} ClaimReview record(s))"
+                       + (" - earlier than anything observed here" if reviewed["date"] < t["ts"] - timedelta(days=2)
+                          else ""))
     if only_debunks:
         bullets.append("Only debunks / fact-checks were found, so this is the earliest observed COVERAGE of the "
                        "claim; the claim itself circulated earlier from an unobserved source")
@@ -131,6 +176,6 @@ def origin_analysis(st, now=None):
         bullets.append(f"Appears before all {len(news_ts)} detected news articles")
     if not cites[t["id"]]:
         bullets.append("Cites no earlier matched item (nothing upstream found)")
-    return {"candidates": out, "p_unobserved": round(p_unobs, 3), "bullets": bullets,
+    return {"candidates": out, "p_unobserved": round(p_unobs, 3), "bullets": bullets, "claim_review": reviewed,
             "anomalies": anomalies[:10], "n_nodes": len(M), "n_edges": len(edges),
             "edge_kinds": dict(Counter(k for k, _ in edges.values()))}

@@ -15,7 +15,7 @@ from typing import Any, TypedDict
 
 import httpx
 
-from . import agents, analysis, config, local, sources
+from . import agents, analysis, config, image, local, sources
 from .models import State
 
 
@@ -30,6 +30,8 @@ class Flow(TypedDict, total=False):
 
 # ------------------------------------------------------------------ single-call mode
 async def run_single(c, st, rounds=2, depth=3, archive=True):
+    if st.image_src:
+        await analyze_image_step(c, st)
     plan, st.paraphrases, st.orgs, st.base_query = local.expand_queries(st.claim)
     st.plan = {k: v for k, v in plan.items() if k in sources.SOURCES}
     if "reddit" in sources.SOURCES:
@@ -49,7 +51,8 @@ async def run_single(c, st, rounds=2, depth=3, archive=True):
         if not fu:
             st.emit("expansion", "no new distinctive terms for another retrieval round; stopping early")
             break
-        st.plan = {"outlets": fu[:1], "news": fu, "factcheck": fu[:1], "duckduckgo": fu[:1]}
+        st.plan = {k: v for k, v in {"outlets": fu[:1], "news": fu, "factcheck": fu[:1], "duckduckgo": fu[:1],
+                                     "websearch": fu[:1]}.items() if k in sources.SOURCES}
         st.emit("expansion", f"follow-up queries from matched headlines: {fu}")
     local.build_variants(st)
     st.emit("matcher", f"{len(st.variants)} variants by stated numbers/dates")
@@ -139,9 +142,18 @@ async def run_sequential(flow: Flow):
     await n_judge(flow)
 
 
-async def run_pipeline(claim, *, rounds=2, depth=3, primary=(), archive=True, on_event=None,
+async def analyze_image_step(c, st):
+    st.image = await image.analyze_image(c, st.image_src, st.claim)
+    if st.image.get("error"):
+        st.emit("image", "! " + st.image["error"])
+        return
+    st.emit("image", f"pHash {st.image.get('phash')} | {len(st.image.get('matches', []))} reverse-search matches "
+                     f"via {st.image.get('reverse_engine') or 'none (no key)'} | " + "; ".join(st.image.get("notes", [])[:3]))
+
+
+async def run_pipeline(claim, *, rounds=2, depth=3, primary=(), archive=True, on_event=None, image=None,
                        use_langgraph=True, mode=None) -> State:
-    st = State(claim, primary, on_event)
+    st = State(claim, primary, on_event, image)
     mode = (mode or config.MODE).lower()
     limits = httpx.Limits(max_keepalive_connections=20, max_connections=50)
     timeout = httpx.Timeout(connect=8.0, read=15.0, write=8.0, pool=10.0)
@@ -150,6 +162,8 @@ async def run_pipeline(claim, *, rounds=2, depth=3, primary=(), archive=True, on
         if mode != "agents":
             await run_single(c, st, rounds=rounds, depth=depth, archive=archive)
             return st
+        if st.image_src:
+            await analyze_image_step(c, st)
         flow: Flow = {"st": st, "c": c, "round": 0, "max_rounds": rounds, "depth": depth, "archive": archive}
         app = None
         if use_langgraph:
