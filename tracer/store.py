@@ -52,6 +52,15 @@ class Store:
             cx.execute(insert(runs).values(id=rid, claim=claim, status="queued", params=params, created_at=now()))
         return rid
 
+    def fail_interrupted(self):
+        """Runs left 'queued' / 'running' by a previous process (deploy, crash, sleep) can never finish:
+        mark them failed so clients stop waiting. Returns how many were marked."""
+        with self.engine.begin() as cx:
+            r = cx.execute(update(runs).where(runs.c.status.in_(("queued", "running"))).values(
+                status="failed", finished_at=now(),
+                error="Interrupted: the server restarted while this run was in progress. Please run it again."))
+        return r.rowcount or 0
+
     def set_status(self, rid, status, error=None):
         vals = {"status": status, "error": error}
         if status in ("done", "failed"):

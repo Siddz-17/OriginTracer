@@ -30,6 +30,7 @@ if os.path.exists(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 store = Store(config.DATABASE_URL)
+store.fail_interrupted()  # runs from a previous process can never finish
 _sem = asyncio.Semaphore(config.MAX_CONCURRENT_RUNS)
 _tasks: set = set()
 
