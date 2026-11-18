@@ -587,11 +587,42 @@ def test_recent_sources():
     assert local.recency_bonus(fresh) > local.recency_bonus(old) == local.recency_bonus(undated) == 0.0
 
 
+def test_groq_413_retry():
+    """Groq's 'Limit 8000, Requested 8136' 413 is retried once with a smaller answer budget."""
+    seen = []
+
+    async def fake_call(c, url, headers, body, name):
+        seen.append(body["max_completion_tokens"])
+        if len(seen) == 1:
+            raise llm.ModelUnavailable("groq HTTP 413: Request too large ... tokens per minute (TPM): "
+                                       "Limit 8000, Requested 8136, please reduce your message size")
+        return '{"ok": true}'
+
+    orig, orig_http, old_key = llm._call_openai_compat, llm._http, os.environ.get("GROQ_API_KEY")
+    llm._call_openai_compat, llm._http = fake_call, (lambda name: None)
+    os.environ["GROQ_API_KEY"] = "test"
+    try:
+        out = asyncio.run(llm._groq("s" * 3000, "u" * 12000, "openai/gpt-oss-120b", 2000))
+        assert out == '{"ok": true}' and len(seen) == 2 and seen[1] == seen[0] - 286, seen
+        try:  # a prompt that cannot fit is refused before any request is sent
+            asyncio.run(llm._groq("s", "u" * 30000, "openai/gpt-oss-120b", 2000))
+            raise AssertionError("expected ModelUnavailable")
+        except llm.ModelUnavailable:
+            pass
+    finally:
+        llm._call_openai_compat, llm._http = orig, orig_http
+        if old_key is None:
+            os.environ.pop("GROQ_API_KEY", None)
+        else:
+            os.environ["GROQ_API_KEY"] = old_key
+
+
 if __name__ == "__main__":
     setup()
     for t in (test_mutation_labels, test_scrape_links, test_local_matching, test_json_extraction, test_pipeline,
               test_single_call_pipeline, test_langgraph_wiring, test_llm_routing, test_stance_and_matching_accuracy,
               test_verdict_checks, test_local_models,
-              test_image_provenance, test_recent_sources):
+              test_image_provenance, test_recent_sources,
+              test_groq_413_retry):
         t()
         print("PASS", t.__name__)
