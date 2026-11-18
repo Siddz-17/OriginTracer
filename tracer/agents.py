@@ -89,8 +89,10 @@ async def source_discovery(c, st):
     cnt = Counter(e.source for e in st.pool.values())
     st.discovery = {"reddit_posts": cnt["reddit"], "bluesky_posts": cnt["bluesky"],
                     "news_articles": cnt["news"] + cnt["gdelt"], "web_results": cnt["duckduckgo"] + cnt["websearch"],
+                    "mastodon_posts": cnt["mastodon"], "hackernews_posts": cnt["hackernews"],
+                    "recent_news": sum(1 for e in st.pool.values() if e.meta.get("recent_search")),
                     "reputable_outlet_items": sum(1 for e in st.pool.values() if local.outlet_score(e) > 0)}
-    if cnt["reddit"] == 0 and cnt["bluesky"] == 0 and (cnt["news"] + cnt["gdelt"]) > 0:
+    if not any(cnt[s] for s in ("reddit", "bluesky", "mastodon", "hackernews")) and (cnt["news"] + cnt["gdelt"]) > 0:
         st.emit("discovery", "social sources unavailable/empty; prioritizing global news coverage as main priority")
     st.emit("discovery", json.dumps(st.discovery))
 
@@ -273,14 +275,16 @@ async def _sec_search(c, st):
         st.emit("evidence", f"! SEC search failed: {type(ex).__name__}")
 
 
-async def _trace_citations(c, st, max_depth=3, budget=25):
+async def _trace_citations(c, st, max_depth=3, budget=None):
+    budget = budget or config.FETCH_BUDGET
     ev = st.by_id()
     matched = sorted((ev[i] for i in st.assign if i in ev), key=lambda e: e.eff_ts)
     seeds, n_news = [], 0
     # Fetch full articles from fact-checkers / wire services / major outlets first, then the most relevant rest.
-    news_candidates = sorted((e for e in matched if e.source in ("news", "gdelt", "duckduckgo", "websearch")),
+    news_candidates = sorted((e for e in matched if e.source in ("news", "gdelt", "duckduckgo", "websearch", "hackernews")),
                              key=lambda e: -(local.outlet_score(e) + st.assign[e.id].get("relevance", 0)
-                                             + (0.3 if st.assign[e.id].get("stance") == "debunk" else 0)))[:16]
+                                             + (0.3 if st.assign[e.id].get("stance") == "debunk" else 0)
+                                             + (0.2 if e.meta.get("recent_search") else 0)))[:config.FETCH_ARTICLES]
     sem = asyncio.Semaphore(4)  # Google News decoding hits Google; keep it gentle
 
     async def _resolve_news(e):

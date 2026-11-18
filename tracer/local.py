@@ -330,6 +330,11 @@ def expand_queries(claim):
         "gdelt": [q for q in gd if len(q.split()) >= 2][:2] or [short],
         "duckduckgo": [queries[0], f"{short} fact check"],
         "bluesky": [short],
+        "recent": list(dict.fromkeys([queries[0], short]))[:2],  # newest coverage first (Google News when:, Bing)
+        "hackernews": [short],
+        # hashtag timelines: the claim's most distinctive name, e.g. #ronaldo
+        "mastodon": [re.sub(r"[^0-9a-z]", "", (names[0] if names else ranked[0] if ranked else "").split()[-1].lower())
+                     ] if (names or ranked) else [],
         "claimreview": list(dict.fromkeys([claim.strip()[:200], short])),  # ClaimReview matches whole claims
         "websearch": [queries[0], f"{short} fact check"],
     }
@@ -431,7 +436,7 @@ def build_variants(st, max_variants=6):
             groups.setdefault(sig, []).append(e)
     # a lone item from an unknown site is more often noise than a real mutation
     groups = {k: v for k, v in groups.items() if len(v) >= 2 or any(st.assign[x.id].get("outlet_tier") for x in v)
-              or any(x.source in ("reddit", "bluesky") for x in v)}
+              or any(x.source in ("reddit", "bluesky", "mastodon", "hackernews") for x in v)}
     keep = sorted(groups, key=lambda k: (-len(groups[k]), groups[k][0].eff_ts))[: max_variants - 1]
     keep.sort(key=lambda k: groups[k][0].eff_ts)  # ids in order of first appearance
     vid = {}
@@ -477,6 +482,16 @@ def _domain(u):
     return urlparse(u or "").netloc.lower().removeprefix("www.")
 
 
+def recency_bonus(e, now=None):
+    """Small ranking bonus for fresh, dated coverage: for developing stories the latest reports settle the claim
+    (an older "he is not planning to retire" is superseded by "he retires")."""
+    if e.meta.get("undated"):
+        return 0.0
+    from datetime import datetime, timezone
+    age = ((now or datetime.now(timezone.utc)) - e.ts).days
+    return 0.08 if age <= 14 else 0.04 if age <= 60 else 0.0
+
+
 def rank_evidence(st, max_items=30, max_chars=28000):
     """Score every candidate document locally and return the de-duplicated top set for the analysis prompt.
 
@@ -504,7 +519,7 @@ def rank_evidence(st, max_items=30, max_chars=28000):
             continue
         dom = e.meta.get("outlet_domain") or _domain(e.meta.get("resolved_url") or e.url)
         tier = a.get("outlet_tier") or outlet_tier(dom) or outlet_tier(e.meta.get("resolved_url") or "")
-        kind = "fact_check" if tier == "fact_check" else ("social" if e.source in ("bluesky", "reddit") else "news")
+        kind = "fact_check" if tier == "fact_check" else ("social" if e.source in ("reddit", "bluesky", "mastodon", "hackernews") else "news")
         w = SOURCE_WEIGHTS.get(kind, 0.5)
         full = e.meta.get("fulltext") or ""
         rel = a.get("relevance", e.meta.get("relevance", 0.0))
@@ -516,7 +531,7 @@ def rank_evidence(st, max_items=30, max_chars=28000):
                       "date": None if e.meta.get("undated") else e.eff_ts.strftime("%Y-%m-%d"),
                       "title": e.text[:160], "rel": rel, "stance": a.get("stance"), "rating": rating,
                       "score": 0.5 * rel + 0.25 * w + 0.15 * TIER_SCORE.get(tier, 0) + 0.1 * bonus
-                               + (0.05 if full else 0.0),
+                               + (0.05 if full else 0.0) + recency_bonus(e),
                       "text": text})
     cands.sort(key=lambda x: -x["score"])
     # Fact-checks about OTHER claims on the same person are common ("Bill Gates did not say ..."), so only

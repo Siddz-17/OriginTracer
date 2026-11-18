@@ -51,8 +51,8 @@ async def run_single(c, st, rounds=2, depth=3, archive=True):
         if not fu:
             st.emit("expansion", "no new distinctive terms for another retrieval round; stopping early")
             break
-        st.plan = {k: v for k, v in {"outlets": fu[:1], "news": fu, "factcheck": fu[:1], "duckduckgo": fu[:1],
-                                     "websearch": fu[:1]}.items() if k in sources.SOURCES}
+        st.plan = {k: v for k, v in {"recent": fu[:1], "outlets": fu[:1], "news": fu, "factcheck": fu[:1],
+                                     "duckduckgo": fu[:1], "websearch": fu[:1]}.items() if k in sources.SOURCES}
         st.emit("expansion", f"follow-up queries from matched headlines: {fu}")
     local.build_variants(st)
     st.emit("matcher", f"{len(st.variants)} variants by stated numbers/dates")

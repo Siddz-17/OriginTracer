@@ -23,7 +23,7 @@ def source_weight(st, sid):
     if isinstance(x, dict):
         return x["weight"]
     if x is not None:
-        if x.source in ("bluesky", "reddit"):
+        if x.source in ("reddit", "bluesky", "mastodon", "hackernews"):
             return SOURCE_WEIGHTS["social"]
         tier = outlet_tier(x.meta.get("outlet_domain") or x.meta.get("resolved_url") or x.url)
         return SOURCE_WEIGHTS["fact_check"] if tier == "fact_check" else SOURCE_WEIGHTS["news"]
@@ -37,7 +37,7 @@ def source_domain(st, sid):
         u = x["url"]
     elif x is not None:
         u = x.meta.get("outlet_domain") or x.meta.get("resolved_url") or x.url
-        if x.source in ("bluesky", "reddit"):
+        if x.source in ("reddit", "bluesky", "mastodon", "hackernews"):
             return f"{x.source}:{x.author}"
     else:
         return sid

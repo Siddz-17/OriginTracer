@@ -34,6 +34,10 @@ primary documents, Wikipedia and social posts. Do the whole analysis in one pass
    only refutes the claim if it addresses the same thing ("largest landowner" is not "largest farmland
    owner"; "visible from the Moon" is not "visible from space"; a fact-check of a different quote by the same
    person says nothing about this claim). Prefer the most recent reputable evidence when facts change over time.
+   RECENCY: compare every item's date with "today". For current or developing events (resignations,
+   retirements, deaths, results, launches, policy changes) the NEWEST reputable reports decide: an older report
+   ("X says he is not planning to retire") does not refute a newer one ("X retires"); say which is latest.
+   If the newest evidence is older than the claim's event could be, the claim may be too recent to verify.
 3. Background knowledge: you may use well-established general facts for context, but the evidence pack wins
    over your memory (events after your training cutoff are real if reputable evidence reports them). Never
    invent sources; cite only ids from the pack. If nothing settles a sub-claim, it is 'unverifiable'.
