@@ -489,12 +489,105 @@ async def first_capture(c, url):
     return min(hits) if hits else None
 
 
+# ------------------------------------------------------------------ recency + extra free sources (no keys)
+RECENT_DAYS = int(os.getenv("TRACER_RECENT_DAYS", "14"))
+
+
+def _bing_items(content):
+    """Bing News RSS items; the real article URL is the `url` parameter of Bing's click-tracking link."""
+    from urllib.parse import parse_qs
+    root = ET.fromstring(content)
+    ns = "{http://www.bing.com/schema/news}"
+    for it in root.iter("item"):
+        link = (it.findtext("link") or "").strip()
+        real = (parse_qs(urlparse(link).query).get("url") or [link])[0]
+        try:
+            ts = parsedate_to_datetime(it.findtext("pubDate"))
+            ts = ts if ts.tzinfo else ts.replace(tzinfo=UTC)
+        except Exception:
+            continue
+        title = html.unescape((it.findtext("title") or "").strip())
+        desc = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html.unescape(it.findtext("description") or ""))).strip()
+        dom = urlparse(real).netloc.lower().removeprefix("www.")
+        name = (it.findtext(ns + "Source") or dom).strip()
+        text = title if desc.startswith(title[:40]) else f"{title}. {desc}"
+        yield dict(source="news", url=real, author=name, ts=ts, text=text[:500], engagement=0,
+                   meta={"outlet_domain": dom, "engine": "bing_news"})
+
+
+async def bing_news(c, q):
+    """Bing News RSS sorted newest first (free, no key)."""
+    r = await c.get("https://www.bing.com/news/search", headers={"User-Agent": BROWSER_UA},
+                    params={"q": q, "format": "rss", "qft": 'sortbydate="1"', "setlang": "en"})
+    r.raise_for_status()
+    return list(_bing_items(r.content))
+
+
+async def recent_news(c, q):
+    """The latest coverage: Google News limited to the last TRACER_RECENT_DAYS days + Bing News by date.
+    Breaking claims ("X retires", "Y has died") are settled by the newest reports, which relevance-sorted
+    searches often bury under older stories."""
+    res = await asyncio.gather(google_news(c, f"{q} when:{RECENT_DAYS}d"), bing_news(c, q), return_exceptions=True)
+    out = []
+    for r in res:
+        if isinstance(r, Exception):
+            logger.warning("recent_news: %s: %s", type(r).__name__, r)
+            continue
+        for it in r:
+            it["meta"]["recent_search"] = True
+            out.append(it)
+    return out
+
+
+async def hackernews(c, q):
+    """Hacker News via the free Algolia API (tech / science claims; links to the original source)."""
+    r = await c.get("https://hn.algolia.com/api/v1/search", params={"query": q, "tags": "story", "hitsPerPage": 40})
+    r.raise_for_status()
+    out = []
+    for h in r.json().get("hits", []):
+        ts = parse_iso(h.get("created_at") or "")
+        if not ts:
+            continue
+        item = f"https://news.ycombinator.com/item?id={h['objectID']}"
+        links = [h["url"]] if h.get("url") else []
+        text = (h.get("title") or "") + (". " + re.sub(r"<[^>]+>", " ", h["story_text"])[:300] if h.get("story_text") else "")
+        out.append(dict(source="hackernews", url=item, author=h.get("author", ""), ts=ts, text=text[:500],
+                        engagement=int(h.get("points") or 0) + int(h.get("num_comments") or 0),
+                        meta={"links": links}))
+    return out
+
+
+MASTODON_INSTANCE = os.getenv("MASTODON_INSTANCE", "https://mastodon.social").rstrip("/")
+
+
+async def mastodon(c, tag):
+    """Public Mastodon hashtag timeline (no key). `tag` is a single word such as a name in the claim."""
+    tag = re.sub(r"[^0-9A-Za-z_]", "", tag)
+    if len(tag) < 3:
+        return []
+    r = await c.get(f"{MASTODON_INSTANCE}/api/v1/timelines/tag/{tag}", params={"limit": 40})
+    r.raise_for_status()
+    out = []
+    for p in r.json():
+        ts = parse_iso(p.get("created_at") or "")
+        if not ts or not p.get("url"):
+            continue
+        text = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", p.get("content") or ""))).strip()
+        links = [m.get("url") for m in [p.get("card") or {}] if m.get("url")]
+        acct = (p.get("account") or {}).get("acct", "")
+        out.append(dict(source="mastodon", url=p["url"], author=acct, ts=ts, text=text[:500],
+                        engagement=int(p.get("favourites_count") or 0) + 2 * int(p.get("reblogs_count") or 0)
+                        + int(p.get("replies_count") or 0), meta={"links": links}))
+    return out
+
+
 ENABLE_REDDIT = (os.getenv("TRACER_ENABLE_REDDIT", "0").lower() in ("1", "true")
                  or bool(os.getenv("REDDIT_CLIENT_ID") and os.getenv("REDDIT_CLIENT_SECRET")))
 
 # Discovery runs every source concurrently; reputable outlets and fact-checkers get their own
 # site-restricted searches and are prioritised by matching and evidence ranking.
-SOURCES = {"outlets": outlets, "factcheck": factcheckers, "news": news, "gdelt": gdelt,
+SOURCES = {"recent": recent_news, "hackernews": hackernews, "mastodon": mastodon,
+           "outlets": outlets, "factcheck": factcheckers, "news": news, "gdelt": gdelt,
            "duckduckgo": duckduckgo, "bluesky": bluesky}
 if ENABLE_REDDIT:
     SOURCES["reddit"] = reddit

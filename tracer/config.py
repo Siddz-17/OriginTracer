@@ -50,8 +50,25 @@ GEMINI_MODELS = [m.strip() for m in os.getenv(
     "GEMINI_MODELS", "gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.8-flash").split(",") if m.strip()]
 _DEFAULT_MODEL = {"gemini": GEMINI_MODELS[0], "groq": "openai/gpt-oss-120b",
                   "openrouter": OPENROUTER_MODELS[0] if OPENROUTER_MODELS else "openrouter/auto"}
-_DEFAULTS = {"fast": "openrouter", "smart": "openrouter", "adversary": "openrouter"}
 PROVIDERS = ("openrouter", "groq", "gemini")
+_KEYS = {"groq": ("GROQ_API_KEY",), "openrouter": ("OPENROUTER_API_KEY",),
+         "gemini": ("GEMINI_API_KEY", "GOOGLE_API_KEY")}
+
+
+def _auto_provider():
+    """LLM_PROVIDER if set, else the first provider that has a key: Groq, then OpenRouter, then Gemini.
+    With no key at all Groq is assumed, so the error names the key to set."""
+    forced = os.getenv("LLM_PROVIDER", "").lower()
+    if forced in PROVIDERS:
+        return forced
+    for p in ("groq", "openrouter", "gemini"):
+        if any(os.getenv(k) for k in _KEYS[p]):
+            return p
+    return "groq"
+
+
+LLM_PROVIDER = _auto_provider()
+_DEFAULTS = {"fast": LLM_PROVIDER, "smart": LLM_PROVIDER, "adversary": LLM_PROVIDER}
 TIERS = {}
 for _t, _p in _DEFAULTS.items():
     _prov = os.getenv(f"{_t.upper()}_PROVIDER", _p).lower()
@@ -65,6 +82,10 @@ LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "180"))  # free reasoning models ca
 # Evidence budget for the single analysis prompt (characters, ~4 chars/token).
 ANALYSIS_MAX_CHARS = int(os.getenv("ANALYSIS_MAX_CHARS", "10000"))
 ANALYSIS_MAX_ITEMS = int(os.getenv("ANALYSIS_MAX_ITEMS", "20"))
+# Full-text scraping: how many matched articles to download (trafilatura) and the total page budget for
+# article bodies + citation chains. More pages = better passages and more primary sources, but slower runs.
+FETCH_ARTICLES = int(os.getenv("TRACER_FETCH_ARTICLES", "30"))
+FETCH_BUDGET = int(os.getenv("TRACER_FETCH_BUDGET", "50"))
 
 DEFAULT_FEEDS = [
     "https://feeds.bbci.co.uk/news/world/rss.xml",

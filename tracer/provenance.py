@@ -42,7 +42,7 @@ def build_graph(st):
         low = e.text.lower()
         for a, x in M.items():
             au = x.author.lower()
-            if a != b and len(au) > 2 and x.source in ("reddit", "bluesky") and (f"@{au}" in low or f"u/{au}" in low):
+            if a != b and len(au) > 2 and x.source in ("reddit", "bluesky", "mastodon", "hackernews") and (f"@{au}" in low or f"u/{au}" in low):
                 add(b, a, "mention", 0.5)
     for u, l in st.cite_edges:
         b, a = uidx.get(norm_url(u)), uidx.get(norm_url(l))
@@ -149,8 +149,8 @@ def origin_analysis(st, now=None):
     bullets = [f"First observed on {t['source']} at {t['ts']:%Y-%m-%d %H:%M UTC}"
                + (f" (Wayback capture pushed this back from {t['orig_ts']:%Y-%m-%d})" if t["ts"] < t["orig_ts"] else "")]
     if len(rejected) >= 3:
-        bullets.append(f"The analysis rejected {len(rejected)} earlier candidates as not stating the claim; "
-                       "the true origin is probably older than anything observed")
+        bullets.append(f"The analysis rejected {len(rejected)} earlier candidates as not stating the claim (previews, "
+                       "related or different stories), so the origin estimate is less certain")
     img = getattr(st, "image", None) or {}
     if img.get("earliest"):
         e0 = img["earliest"]

@@ -76,6 +76,17 @@ least 50% when only debunks were found). Both are heuristics, not calibrated.
 
 First-seen dates now come from the Wayback Machine **and** archive.today (earliest wins; no key needed).
 
+Always on, no key: **recent news** (Google News limited to the last `TRACER_RECENT_DAYS`=14 days plus Bing News
+sorted newest-first, so breaking stories are judged on the latest reports), **Hacker News** (Algolia API) and
+**Mastodon** hashtag timelines (`MASTODON_INSTANCE`, default mastodon.social), alongside Google News, the outlet and
+fact-checker searches, GDELT, DuckDuckGo, Bluesky and Wikipedia. Up to `TRACER_FETCH_ARTICLES`=30 matched articles
+are downloaded and parsed in full (trafilatura), within a `TRACER_FETCH_BUDGET`=50 page budget that also covers
+citation chains. Fresh coverage gets a small ranking bonus, and the analysis is told that the newest reputable
+reports decide developing stories.
+
+**LLM provider:** the first provider with a key is used: Groq, then OpenRouter, then Gemini (`LLM_PROVIDER` forces
+one). `GET /health` shows which keys the server can see (true/false only).
+
 ## Local models (optional, CPU, no key)
 `pip install torch --index-url https://download.pytorch.org/whl/cpu && pip install -r requirements-models.txt`
 turns on, automatically (`TRACER_LOCAL_MODELS=auto`):

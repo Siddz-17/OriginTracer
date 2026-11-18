@@ -321,6 +321,12 @@ async def ask_json(system: str, user: str, tier: str = "fast", max_tokens: int =
         pause = min(max(min(waits), 5.0), 30.0)
         logger.warning("ask_json: every model was rate limited; waiting %.0fs before one more sweep", pause)
         await asyncio.sleep(pause)
+    if not any(_has_key(p) for p in config.PROVIDERS):
+        msg = ("No LLM API key is configured in this environment: set GROQ_API_KEY (free at "
+               "https://console.groq.com/keys), or OPENROUTER_API_KEY / GEMINI_API_KEY. On Render: service -> "
+               "Environment -> add the variable -> redeploy.")
+        logger.error(msg)
+        raise NoJsonReturned(msg)
     msg = f"ask_json tier={tier}: no provider returned usable JSON (last error: {type(last).__name__}: {last})"
     logger.error(msg)
     raise NoJsonReturned(msg)

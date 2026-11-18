@@ -94,7 +94,11 @@ def get_report(rid: str):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "mode": config.MODE, "openrouter_models": config.OPENROUTER_MODELS,
+    keys = ("GROQ_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "GOOGLE_FACTCHECK_API_KEY", "BRAVE_API_KEY",
+            "TAVILY_API_KEY", "SERPER_API_KEY", "REDDIT_CLIENT_ID", "SERPAPI_API_KEY", "TINEYE_API_KEY")
+    return {"ok": True, "mode": config.MODE, "llm_provider": config.LLM_PROVIDER,
+            "llm_key_configured": any(os.getenv(k) for k in ("GROQ_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY")),
+            "keys_set": {k: bool(os.getenv(k)) for k in keys},  # presence only, never values
             "tiers": {t: {"provider": p, "model": m} for t, (p, m) in config.TIERS.items()}}
 
 

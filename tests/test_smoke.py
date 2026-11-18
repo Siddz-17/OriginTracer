@@ -567,11 +567,31 @@ def test_image_provenance():
             os.environ["SERPAPI_API_KEY"] = orig[3]
 
 
+def test_recent_sources():
+    """Bing News RSS parsing (real URL unwrapped from the click link) and the recency ranking bonus."""
+    from datetime import timedelta as _td
+    from tracer import local
+    from tracer.models import Ev
+    rss = (b'<?xml version="1.0"?><rss xmlns:News="http://www.bing.com/schema/news"><channel><item>'
+           b'<title>Ronaldo retires from Portugal</title>'
+           b'<link>http://www.bing.com/news/apiclick.aspx?ref=FexRss&amp;url=https%3a%2f%2fapnews.com%2farticle%2fx&amp;c=1</link>'
+           b'<description>The forward announced it on Wednesday</description>'
+           b'<pubDate>Wed, 05 Nov 2026 10:00:00 GMT</pubDate><News:Source>AP News</News:Source></item></channel></rss>')
+    items = list(sources._bing_items(rss))
+    assert items[0]["url"] == "https://apnews.com/article/x" and items[0]["author"] == "AP News", items
+    assert items[0]["meta"]["outlet_domain"] == "apnews.com"
+    now = datetime.now(UTC)
+    fresh = Ev(id="E1", source="news", url="u1", author="a", ts=now - _td(days=2), text="x")
+    old = Ev(id="E2", source="news", url="u2", author="a", ts=now - _td(days=400), text="x")
+    undated = Ev(id="E3", source="news", url="u3", author="a", ts=now, text="x", meta={"undated": True})
+    assert local.recency_bonus(fresh) > local.recency_bonus(old) == local.recency_bonus(undated) == 0.0
+
+
 if __name__ == "__main__":
     setup()
     for t in (test_mutation_labels, test_scrape_links, test_local_matching, test_json_extraction, test_pipeline,
               test_single_call_pipeline, test_langgraph_wiring, test_llm_routing, test_stance_and_matching_accuracy,
               test_verdict_checks, test_local_models,
-              test_image_provenance):
+              test_image_provenance, test_recent_sources):
         t()
         print("PASS", t.__name__)
