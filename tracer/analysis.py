@@ -6,6 +6,7 @@ and judge agents together, over the top-ranked evidence only. Code (not the mode
 """
 import json
 import os
+import re
 from datetime import datetime
 
 from . import llm
@@ -207,8 +208,21 @@ async def consolidated_analysis(c, st, max_items=30, max_chars=28000):
         if not res["subclaims"] and res["verdict"] == "unverifiable" and not res["rationale"]:
             raise NoJsonReturned("model returned JSON without an analysis")
     except NoJsonReturned as e:
-        st.emit("analysis", f"! LLM analysis failed: {str(e)[:200]}")
-        res = _local_fallback(st, items, e)
+        res = None
+        if re.search(r"413|too large|TPM|context length|maximum context", str(e), re.I) and len(items) > 6:
+            # the evidence pack did not fit the provider's request limit: retry once with a smaller pack
+            items = rank_evidence(st, max_items=max(6, len(items) // 2), max_chars=int(max_chars * 0.55))
+            valid = {x["id"] for x in items}
+            st.emit("analysis", f"request too large for the LLM; retrying with {len(items)} evidence items")
+            try:
+                res = _clean(await llm.ask_json(ANALYSIS_SYS, _pack(st, items), "smart", 2000), valid)
+                if not res["subclaims"] and res["verdict"] == "unverifiable" and not res["rationale"]:
+                    res = None
+            except NoJsonReturned as e2:
+                e = e2
+        if res is None:
+            st.emit("analysis", f"! LLM analysis failed: {str(e)[:200]}")
+            res = _local_fallback(st, items, e)
 
     # Apply the model's stance review to the matcher output (no extra call).
     for i in res["irrelevant_ids"]:

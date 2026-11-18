@@ -175,16 +175,34 @@ async def _groq(system, user, model, max_tokens):
     key = os.getenv("GROQ_API_KEY")
     if not key:
         raise ProviderUnavailable("GROQ_API_KEY is not set")
-    # Groq on-demand tier enforces an 8,000 TPM limit (prompt + completion tokens).
-    est_prompt_tokens = int((len(system) + len(user)) / 3.2)
-    if est_prompt_tokens >= 7200:
-        raise ModelUnavailable(f"groq: prompt length ({est_prompt_tokens} est. tokens) exceeds 8000 TPM limit")
-    safe_max_tokens = min(max_tokens, max(800, 7600 - est_prompt_tokens))
+    # Groq's on-demand tier counts prompt + max_completion_tokens against an 8,000 tokens-per-minute limit.
+    # JSON, URLs and non-English text tokenise denser than prose, so estimate conservatively (~2.8 chars/token).
+    est_prompt_tokens = int((len(system) + len(user)) / 2.8)
+    if est_prompt_tokens >= GROQ_TPM - 900:
+        raise ModelUnavailable(f"groq: prompt too large ({est_prompt_tokens} est. tokens) for the {GROQ_TPM} TPM "
+                               "limit (HTTP 413)")
+    safe_max_tokens = min(max_tokens, max(700, GROQ_TPM - 300 - est_prompt_tokens))
     body = _openai_compat_body(system, user, model, safe_max_tokens)
     body["max_completion_tokens"] = body.pop("max_tokens")  # Groq uses max_completion_tokens
     if model.startswith("openai/gpt-oss"):
         body["reasoning_effort"] = "low"
-    return await _call_openai_compat(_http("groq"), GROQ_URL, {"Authorization": f"Bearer {key}"}, body, "groq")
+    try:
+        return await _call_openai_compat(_http("groq"), GROQ_URL, {"Authorization": f"Bearer {key}"}, body, "groq")
+    except ModelUnavailable as e:
+        # 413 "Limit 8000, Requested 8136": shrink the reserved answer by the overshoot and try once more
+        m = re.search(r"Limit (\d+), Requested (\d+)", str(e))
+        if not m:
+            raise
+        over = int(m.group(2)) - int(m.group(1)) + 150
+        smaller = body["max_completion_tokens"] - over
+        if smaller < 600:
+            raise
+        logger.warning("groq 413: retrying with max_completion_tokens %d (was %d)", smaller, body["max_completion_tokens"])
+        body["max_completion_tokens"] = smaller
+        return await _call_openai_compat(_http("groq"), GROQ_URL, {"Authorization": f"Bearer {key}"}, body, "groq")
+
+
+GROQ_TPM = int(os.getenv("GROQ_TPM", "8000"))  # raise if your Groq tier allows more tokens per minute
 
 
 _or_params: dict = {}  # model id -> supported_parameters (from the public models endpoint)
